@@ -50,6 +50,15 @@
 **位置**：`<DSH_HOME>\session-purge-trash\<项目目录>\<会话id>\`（`DSH_HOME` 默认 `~/.dsh`）。
 
 **卸载前请先清空回收站**（面板里的「清空回收站」就是立刻真删）。卸载后没有任何代码在跑，回收站只能手动处理：删掉目录 = 真删；把里面的会话目录移回 `<DSH_HOME>\sessions\<同一个项目目录>\` = 恢复。
+## 从 GitHub 安装
+
+在 DSH 的「添加插件」里填入仓库地址即可（不需要 npm 账号）：
+
+```
+https://github.com/OliYogSothoth/dsh-plugin-session-purge
+```
+
+装完重启 Harness。源码就在这个仓库里，改完重新装或直接刷新页面即可看到客户端改动（宿主改动需重启）。
 ## 安装
 
 ```

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
-  "description": "Permanently delete a session: its log directory, its projection cache, and its workspace accounting — reachable from the Session \"...\" menu and from a session_delete tool.",
+  "description": "Delete DeepSeek Harness sessions for good - via a recycle bin: move, restore, then the next start wipes the log, projection cache, spill files and workspace accounting.",
   "keywords": [
     "dsh",
     "dsh-plugin",

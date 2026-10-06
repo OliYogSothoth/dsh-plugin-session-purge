@@ -69,6 +69,10 @@ function makeCtx({ sessions = [], agents = [], snapshots, registry, cache }) {
   const stops = []
   const evicted = []
   const emitted = []
+  // The same emissions, kept structured: `emitted` stringifies the payload (fine
+  // for the removal notice, whose payload is the id), while the added notice
+  // carries a summary object that only survives as a value.
+  const emittedPayloads = []
   const ctx = {
     connection: { fetch: { register: (next) => { route = next; return () => {} } } },
     tools: { register: (definition) => { tool = definition; return () => {} } },
@@ -76,7 +80,10 @@ function makeCtx({ sessions = [], agents = [], snapshots, registry, cache }) {
     // The stop providers announce themselves here; the store entry mirrors what
     // the real `sessions` service exposes (`store` Map + per-entry `detach`).
     parallel: async (event, payload) => { stops.push(`${event}:${payload.sessionId}`) },
-    emit: (event, payload) => { emitted.push(`${event}:${payload}`) },
+    emit: (event, payload) => {
+      emitted.push(`${event}:${payload}`)
+      emittedPayloads.push({ event, payload })
+    },
     get(name) {
       if (name === 'sessions') {
         return {
@@ -91,7 +98,7 @@ function makeCtx({ sessions = [], agents = [], snapshots, registry, cache }) {
     },
     sessionPersistence: { root: ROOT, list: async () => snapshots.map((h) => ({ header: h, revision: 1 })) },
   }
-  return { ctx, route: () => route, tool: () => tool, stops, evicted, emitted }
+  return { ctx, route: () => route, tool: () => tool, stops, evicted, emitted, emittedPayloads }
 }
 
 function resetBin() {
@@ -320,8 +327,10 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
   // Restore is a pure rename back: the directory returns, the bin empties, and
   // nothing else had to be undone because the move never touched it. It also
   // re-attaches: `cwd` is read back out of the session's own log, which
-  // travelled with the directory into the bin.
-  await seed(PARENT, { log: { name: 'session.v4.jsonl', bytes: logLine(header(PARENT, { cwd: 'C:/demo' })) } })
+  // travelled with the directory into the bin — and the page is told the row is
+  // back, because the move's removal notice is what dropped it.
+  const restoredHeader = header(PARENT, { cwd: 'C:/demo' })
+  await seed(PARENT, { log: { name: 'session.v4.jsonl', bytes: logLine(restoredHeader) } })
   await resetBin()
   const attached = []
   const resolved = []
@@ -335,7 +344,7 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
     },
   }
   const binCache = { get: () => undefined }
-  const { ctx, route } = makeCtx({ snapshots, registry: binRegistry, cache: binCache })
+  const { ctx, route, emittedPayloads } = makeCtx({ snapshots, registry: binRegistry, cache: binCache })
   apply(ctx)
   const moved = await call(route(), 'move', { sessionId: PARENT })
   const restored = await call(route(), 'restore', { sessionId: PARENT })
@@ -349,6 +358,25 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
   check('restore re-attaches the session to the workspace its log names',
     restored.body.ok === true && resolved.join() === 'C:/demo' && attached.join() === PARENT,
     `resolved=${resolved.join()} attached=${attached.join()}`)
+  // The removal notice of the move and the addition notice of the restore are
+  // one pair: without the second the row the first dropped never comes back.
+  check('a round trip sends the removal notice and then the addition notice',
+    emittedPayloads.length === 2
+      && emittedPayloads[0].event === 'api-session/removed' && emittedPayloads[0].payload === PARENT
+      && emittedPayloads[1].event === 'api-session/added' && emittedPayloads[1].payload?.sessionId === PARENT,
+    JSON.stringify(emittedPayloads.map((entry) => `${entry.event}:${JSON.stringify(entry.payload)}`)))
+  const announced = emittedPayloads.find((entry) => entry.event === 'api-session/added')?.payload
+  // The shape the Host itself sends for a session that is not live
+  // (`ApiSessionList.summarizeCold`), minus the projection block: a restore must
+  // not read (or write) the projection cache, and the Host's rule for a cache
+  // miss is a visible row.
+  check('the addition notice is a cold-session summary with no projection block',
+    announced?.running === false && announced?.agentAvailable === false && announced?.blank === false
+      && announced?.cwd === 'C:/demo'
+      && announced?.updatedAt === restoredHeader.createdAt
+      && announced?.projections === undefined
+      && !('projections' in (announced ?? {})),
+    JSON.stringify(announced))
   const gone = await call(route(), 'restore', { sessionId: PARENT })
   check('restoring what is not binned is refused',
     gone.body.ok === false && gone.body.error.code === 'session-purge/not-binned',
@@ -374,7 +402,7 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
       return { sessionIds: [], attachSession: async (id) => { attached.push(id) } }
     },
   }
-  const { ctx, route } = makeCtx({ snapshots, registry: zstdRegistry, cache: { get: () => undefined } })
+  const { ctx, route, emittedPayloads } = makeCtx({ snapshots, registry: zstdRegistry, cache: { get: () => undefined } })
   apply(ctx)
   const moved = await call(route(), 'move', { sessionId: PARENT })
   const restored = await call(route(), 'restore', { sessionId: PARENT })
@@ -382,6 +410,12 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
     moved.body.ok === true && restored.body.ok === true
       && resolved.join() === 'C:/demo-zstd' && attached.join() === PARENT,
     `resolved=${resolved.join()} attached=${attached.join()}`)
+  // The notice is built from the same header read, so the compressed generation
+  // has to carry it too rather than announcing a summary with no `cwd`.
+  const announced = emittedPayloads.find((entry) => entry.event === 'api-session/added')?.payload
+  check('a zstd restore announces the session with the cwd from the compressed log',
+    announced?.sessionId === PARENT && announced?.cwd === 'C:/demo-zstd' && announced?.running === false,
+    JSON.stringify(emittedPayloads.map((entry) => `${entry.event}:${JSON.stringify(entry.payload)}`)))
 }
 // -------------------------------------------------------------------- verdict
 const failed = results.filter((r) => !r.pass)

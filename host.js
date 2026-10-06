@@ -417,9 +417,13 @@ class SessionPurger {
   /**
    * Put one binned session back where it came from.
    *
-   * Nothing else has to be undone: the move never touched the workspace
-   * membership, the archive set, or the pin set, so putting the directory back
-   * *is* the restore — the session returns to the group it left.
+   * Nothing durable has to be undone: the move never touched the workspace
+   * membership, the archive set, the pin set, or the projection cache, so
+   * putting the directory back *is* the restore — the session returns to the
+   * group it left. Two things do have to be said out loud afterwards, and both
+   * are read out of the log that travelled with the directory: which workspace
+   * to re-attach to (`attachBack`), and that the row is back (`announceRestored`,
+   * the counterpart of the removal notice `quiesce` sent on the way in).
    */
   async restore(entry) {
     const sessionsRoot = this.sessionsRoot()
@@ -428,7 +432,9 @@ class SessionPurger {
     const destination = join(sessionsRoot, entry.projectDir, entry.id)
     await mkdir(dirname(destination), { recursive: true })
     await rename(source, destination)
-    await this.attachBack(entry.id, destination)
+    const header = await readSessionHeader(destination)
+    await this.attachBack(entry.id, header)
+    this.announceRestored(entry.id, header)
     return destination
   }
 
@@ -438,11 +444,14 @@ class SessionPurger {
    * The session's own log carries the header (`cwd` included), and it travelled
    * with the directory into the bin — so nothing extra has to be recorded
    * anywhere: the answer is read back out of the session itself.
+   *
+   * @param sessionId - the restored session.
+   * @param header - the header of the restored log, or `undefined`.
+   * @returns whether the session was attached to a workspace.
    */
-  async attachBack(sessionId, directory) {
+  async attachBack(sessionId, header) {
     const registry = this.ctx.get('workspaceRegistry')
     if (registry === undefined) return false
-    const header = await readSessionHeader(directory)
     const cwd = typeof header?.cwd === 'string' ? header.cwd : undefined
     if (cwd === undefined) return false
     try {
@@ -452,6 +461,49 @@ class SessionPurger {
       await workspace.attachSession(sessionId)
       return true
     } catch {
+      return false
+    }
+  }
+
+  /**
+   * Tell the page that a restored session is on the list again.
+   *
+   * A restore is deliberately not a session creation, so the Host's own
+   * `session/created` -> `api-session/added` pair can never fire for it — while
+   * the move into the bin *did* send `api-session/removed`, which is exactly what
+   * made the row leave. `api-session/added` is therefore the only way back: its
+   * consumer upserts the summary by `sessionId`, and an id it does not know is
+   * prepended as a row instead of being ignored.
+   *
+   * The payload is the shape the Host itself builds for a session that is not
+   * live (`ApiSessionList.summarizeCold`), with the `projections` block left out:
+   * the projection cache is what a restore must not touch, and for a cache miss
+   * the Host's own rule is a visible row (`blank: false`, "remains unknown and
+   * visible"). Nothing here creates a session or writes anything.
+   *
+   * @param sessionId - the restored session.
+   * @param header - the header of the restored log, or `undefined`.
+   * @returns whether the notice was handed to the event bus.
+   */
+  announceRestored(sessionId, header) {
+    if (header === undefined) return false
+    try {
+      this.ctx.emit('api-session/added', {
+        sessionId,
+        // `summarizeCold`: Math.max(header.createdAt, metadata?.lastPromptAt ?? 0),
+        // and a cache miss has no lastPromptAt.
+        updatedAt: Number.isFinite(header.createdAt) ? Math.max(header.createdAt, 0) : 0,
+        agentAvailable: false,
+        running: false,
+        blank: false,
+        ...(typeof header.parentSession === 'string' ? { parentSessionId: header.parentSession } : {}),
+        ...(typeof header.origin === 'string' ? { origin: header.origin } : {}),
+        ...(typeof header.cwd === 'string' ? { cwd: header.cwd } : {}),
+      })
+      return true
+    } catch {
+      // The directory is already back where it belongs, so a notice the bus
+      // refused must not turn a good restore into a failed one.
       return false
     }
   }
