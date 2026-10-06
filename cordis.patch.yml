@@ -1,0 +1,6 @@
+# Bundle patch: insert the Session Delete Host row.
+# The Client half is loaded from this package's "./client" export through the
+# manifest's `dsh.client` section; no second row is needed for it.
+- insert:
+    - id: session-purge
+      name: dsh-plugin-session-purge
