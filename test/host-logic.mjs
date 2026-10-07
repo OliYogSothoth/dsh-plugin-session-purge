@@ -63,7 +63,7 @@ async function seed(id, { log } = {}) {
 }
 
 /** A fake ctx whose every service the Host half touches is observable. */
-function makeCtx({ sessions = [], agents = [], snapshots, registry, cache }) {
+function makeCtx({ sessions = [], agents = [], snapshots, registry, cache, projectionCache }) {
   let route
   let tool
   const stops = []
@@ -94,6 +94,9 @@ function makeCtx({ sessions = [], agents = [], snapshots, registry, cache }) {
       if (name === 'agents') return { get: (id) => (agents.includes(id) ? { id } : undefined) }
       if (name === 'workspaceRegistry') return registry
       if (name === 'storageDomain') return cache
+      // The persisted projection cache, only ever read for a restore's listing
+      // hints. Absent by default, which is a deployment without the cache.
+      if (name === 'sessionProjectionCache') return projectionCache
       return undefined
     },
     sessionPersistence: { root: ROOT, list: async () => snapshots.map((h) => ({ header: h, revision: 1 })) },
@@ -416,6 +419,85 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
   check('a zstd restore announces the session with the cwd from the compressed log',
     announced?.sessionId === PARENT && announced?.cwd === 'C:/demo-zstd' && announced?.running === false,
     JSON.stringify(emittedPayloads.map((entry) => `${entry.event}:${JSON.stringify(entry.payload)}`)))
+}
+{
+  // A cold row without its cached title reads "untitled" until the next list
+  // response, so the notice asks the cache's own listing face for the two keys
+  // it knows how to place — the title and the list metadata — and nothing else.
+  await rm(parentDir, { recursive: true, force: true })
+  const cachedHeader = header(PARENT, { cwd: 'C:/demo' })
+  await seed(PARENT, { log: { name: 'session.v4.jsonl', bytes: logLine(cachedHeader) } })
+  await resetBin()
+  const asked = []
+  const projectionCache = {
+    cachedSnapshot: (meta, keys) => {
+      asked.push(`${meta?.id}:${(keys ?? []).join('+')}`)
+      return {
+        asOfSeq: 7,
+        values: {
+          title: 'Restored title',
+          sessionListMetadata: { blank: false, lastPromptAt: cachedHeader.createdAt + 5000 },
+        },
+      }
+    },
+  }
+  const { ctx, route, emittedPayloads } = makeCtx({
+    snapshots,
+    registry: { list: () => [], archivedSessionIds: [], pinnedSessionIds: [] },
+    cache: { get: () => undefined },
+    projectionCache,
+  })
+  apply(ctx)
+  const moved = await call(route(), 'move', { sessionId: PARENT })
+  const restored = await call(route(), 'restore', { sessionId: PARENT })
+  const notice = emittedPayloads.find((entry) => entry.event === 'api-session/added')?.payload
+  check('the addition notice carries the cached title and its list metadata',
+    moved.body.ok === true && restored.body.ok === true
+      && asked.join() === `${PARENT}:title+sessionListMetadata`
+      && notice?.projections?.kind === 'cached' && notice?.projections?.asOfSeq === 7
+      && notice?.projections?.values?.title === 'Restored title'
+      // The Host's own `updatedAt(header, metadata)`: the row sorts where it did
+      // before the move, not at its creation time.
+      && notice?.updatedAt === cachedHeader.createdAt + 5000
+      && notice?.blank === false,
+    JSON.stringify(notice))
+}
+{
+  // Every way the read can come up empty — no cache service, no record for this
+  // lifecycle, a read that throws — must leave the notice exactly as it was
+  // before the read existed, and must never fail the restore.
+  const registry = { list: () => [], archivedSessionIds: [], pinnedSessionIds: [] }
+  const runCycle = async (read) => {
+    await rm(parentDir, { recursive: true, force: true })
+    const cycleHeader = header(PARENT, { cwd: 'C:/demo' })
+    await seed(PARENT, { log: { name: 'session.v4.jsonl', bytes: logLine(cycleHeader) } })
+    await resetBin()
+    const { ctx, route, emittedPayloads } = makeCtx({
+      snapshots,
+      registry,
+      cache: { get: () => undefined },
+      projectionCache: read === undefined ? undefined : { cachedSnapshot: read },
+    })
+    apply(ctx)
+    await call(route(), 'move', { sessionId: PARENT })
+    const restored = await call(route(), 'restore', { sessionId: PARENT })
+    return { restored, cycleHeader, payload: emittedPayloads.find((entry) => entry.event === 'api-session/added')?.payload }
+  }
+  const noService = await runCycle(undefined)
+  const noRecord = await runCycle(() => undefined)
+  const failedRead = await runCycle(() => { throw new Error('cache read failed') })
+  const degraded = (cycle) => cycle.restored.body.ok === true
+    && cycle.payload !== undefined
+    && !('projections' in cycle.payload)
+    && cycle.payload.updatedAt === cycle.cycleHeader.createdAt
+    && cycle.payload.blank === false
+    && cycle.payload.running === false && cycle.payload.agentAvailable === false
+    && cycle.payload.cwd === 'C:/demo'
+  check('a missing or failing cache read degrades to the previous notice and the restore still succeeds',
+    degraded(noService) && degraded(noRecord) && degraded(failedRead),
+    [noService, noRecord, failedRead]
+      .map((cycle) => `${cycle.restored.body.ok}:${JSON.stringify(cycle.payload)}`)
+      .join(' | '))
 }
 // -------------------------------------------------------------------- verdict
 const failed = results.filter((r) => !r.pass)

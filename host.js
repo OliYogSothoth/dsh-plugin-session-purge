@@ -476,10 +476,8 @@ class SessionPurger {
    * prepended as a row instead of being ignored.
    *
    * The payload is the shape the Host itself builds for a session that is not
-   * live (`ApiSessionList.summarizeCold`), with the `projections` block left out:
-   * the projection cache is what a restore must not touch, and for a cache miss
-   * the Host's own rule is a visible row (`blank: false`, "remains unknown and
-   * visible"). Nothing here creates a session or writes anything.
+   * live (`ApiSessionList.summarizeCold`), projections included when the cache
+   * can still serve them. Nothing here creates a session or writes anything.
    *
    * @param sessionId - the restored session.
    * @param header - the header of the restored log, or `undefined`.
@@ -488,23 +486,74 @@ class SessionPurger {
   announceRestored(sessionId, header) {
     if (header === undefined) return false
     try {
+      const projections = this.restoredProjections(header)
+      const metadata = projections?.values?.sessionListMetadata
       this.ctx.emit('api-session/added', {
         sessionId,
-        // `summarizeCold`: Math.max(header.createdAt, metadata?.lastPromptAt ?? 0),
-        // and a cache miss has no lastPromptAt.
-        updatedAt: Number.isFinite(header.createdAt) ? Math.max(header.createdAt, 0) : 0,
+        // `summarizeCold`'s `updatedAt(header, metadata)`, with a cache miss
+        // (`lastPromptAt` absent) falling back to the log's own `createdAt`.
+        updatedAt: Math.max(
+          Number.isFinite(header.createdAt) ? header.createdAt : 0,
+          Number.isFinite(metadata?.lastPromptAt) ? metadata.lastPromptAt : 0,
+        ),
         agentAvailable: false,
         running: false,
-        blank: false,
+        // `metadata?.blank ?? false`: a metadata-less cache miss stays visible.
+        blank: typeof metadata?.blank === 'boolean' ? metadata.blank : false,
         ...(typeof header.parentSession === 'string' ? { parentSessionId: header.parentSession } : {}),
         ...(typeof header.origin === 'string' ? { origin: header.origin } : {}),
         ...(typeof header.cwd === 'string' ? { cwd: header.cwd } : {}),
+        ...(projections === undefined ? {} : { projections }),
       })
       return true
     } catch {
       // The directory is already back where it belongs, so a notice the bus
       // refused must not turn a good restore into a failed one.
       return false
+    }
+  }
+
+  /**
+   * The listing projections of one restored session, read-only.
+   *
+   * THIS IS THE PLUGIN'S ONLY PROJECTION-CACHE READ, and it exists for exactly
+   * one reason: the notice above is the only thing that puts the row back, and a
+   * row without its cached title reads as untitled until the next list response.
+   * The cache is otherwise untouched by design — the move must not need it, and
+   * the purge deletes through the storage domain without ever reading a value.
+   *
+   * Three things keep the read narrow:
+   *
+   *   1. it goes through the cache's own listing face (`cachedSnapshot`, the
+   *      zero-I/O read over the domain's in-memory table that never seeds a fold
+   *      and never writes), so the record's lifecycle identity and every row's
+   *      `ver` are checked by their owner — we never reinterpret a record;
+   *   2. it asks for two known keys only, `title` and the list metadata the Host
+   *      itself folds into a summary, instead of forwarding whatever the record
+   *      holds — the payload stays this plugin's own shape rather than becoming a
+   *      copy of DSH's internal record layout;
+   *   3. every failure is the same answer: no cache service, no record, an
+   *      unrelated lifecycle, a refused schema or a thrown read all return
+   *      `undefined`, and the caller then sends exactly the notice it sent before
+   *      this read existed.
+   *
+   * @param header - the header of the restored log (the lifecycle witness).
+   * @returns the `projections` block for the notice, or `undefined`.
+   */
+  restoredProjections(header) {
+    try {
+      const cache = this.ctx.get('sessionProjectionCache')
+      if (cache === undefined || typeof cache.cachedSnapshot !== 'function') return undefined
+      const block = cache.cachedSnapshot(header, ['title', 'sessionListMetadata'])
+        ?? cache.cachedPredecessorTitle?.(header)
+      if (block === undefined || typeof block.values !== 'object' || block.values === null) return undefined
+      if (Object.keys(block.values).length === 0) return undefined
+      // The Host's own envelope for a listed row (`hintsOf`): a header-only read
+      // serves a `cached` block whose watermark is the stored record's own, and
+      // the client fills those keys only where no live frame already holds them.
+      return { kind: 'cached', asOfSeq: block.asOfSeq, values: block.values }
+    } catch {
+      return undefined
     }
   }
 
