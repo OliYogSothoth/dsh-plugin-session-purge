@@ -430,6 +430,14 @@ window.__ModuleLoader__.load({
     let listBin = async () => ({ ok: false, message: 'the plugin is not active yet' })
     let restoreBin = async () => ({ ok: false, message: 'the plugin is not active yet' })
     let emptyBin = async () => ({ ok: false, message: 'the plugin is not active yet' })
+    /**
+     * Drops every persisted page key naming a session the Host deleted for real;
+     * assigned in `apply`. It lives here rather than inside `apply` because the
+     * bin panel needs it the moment an "empty" answer arrives — that answer is
+     * the only place the page ever learns those ids — and the panel is a sibling
+     * of `apply`, not a child of it.
+     */
+    let clearPageKeys = () => 0
 
     /** A tiny open/closed flag the footer action and the panel share. */
     let binOpen = false
@@ -521,7 +529,14 @@ window.__ModuleLoader__.load({
       const run = (endpoint, sessionId) => {
         setState((previous) => ({ ...previous, busy: sessionId ?? '*' }))
         const call = endpoint === 'restore' ? restoreBin({ sessionId }) : emptyBin({})
-        call.then(() => {
+        call.then((result) => {
+          // Emptying the bin deletes for real right now, so this answer carries
+          // the only ids the page will ever see for those sessions.
+          if (endpoint === 'empty' && result?.ok === true) {
+            const purged = Array.isArray(result.value?.purged) ? result.value.purged : []
+            const removed = clearPageKeys(purged)
+            console.info(`[session-purge] page keys: removed ${removed} key(s) after emptying the bin`)
+          }
           refresh()
           binStore.set(binStore.get())
         })
@@ -613,10 +628,11 @@ window.__ModuleLoader__.load({
 
       /**
        * Drop every persisted page key that names a session the Host has already
-       * deleted for real. Runs once per page load: the Host holds the ids it
-       * purged at start-up in memory only, so this is the one moment they exist.
+       * deleted for real. Called on two occasions: once per page load, with the
+       * ids the Host purged at start-up and still holds in memory, and again
+       * whenever "empty the bin" answers, with the ids it just deleted.
        */
-      const clearPageKeys = (ids) => {
+      clearPageKeys = (ids) => {
         if (!Array.isArray(ids) || ids.length === 0) return 0
         let removed = 0
         try {
