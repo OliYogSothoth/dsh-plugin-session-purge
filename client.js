@@ -617,20 +617,31 @@ window.__ModuleLoader__.load({
        * purged at start-up in memory only, so this is the one moment they exist.
        */
       const clearPageKeys = (ids) => {
-        if (!Array.isArray(ids) || ids.length === 0) return
+        if (!Array.isArray(ids) || ids.length === 0) return 0
+        let removed = 0
         try {
           const doomed = []
           for (let index = 0; index < window.localStorage.length; index += 1) {
             const key = window.localStorage.key(index)
             if (typeof key === 'string' && ids.some((id) => key.includes(id))) doomed.push(key)
           }
-          for (const key of doomed) window.localStorage.removeItem(key)
+          for (const key of doomed) {
+            window.localStorage.removeItem(key)
+            removed += 1
+          }
         } catch {
           // A browser that refuses storage is not a reason to fail activation.
         }
+        return removed
       }
+      // A console line rather than UI: this is diagnostic evidence, and the
+      // panel should stay free of it.
       void callHost('list', {}).then((result) => {
-        if (result.ok) clearPageKeys(result.value?.lastPurged)
+        if (result.ok === true) {
+          const purged = Array.isArray(result.value?.lastPurged) ? result.value.lastPurged : []
+          const removed = clearPageKeys(purged)
+          console.info(`[session-purge] page keys: removed ${removed} key(s) for ${purged.length} purged session(s)`)
+        }
       })
       const requestDelete = (sessionId, displayTitle) => {
         requestStore.set({ sessionId, displayTitle: typeof displayTitle === 'string' ? displayTitle : '' })
