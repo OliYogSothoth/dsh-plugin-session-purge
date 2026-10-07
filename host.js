@@ -28,11 +28,21 @@
  *     drops the rows of any log it can no longer see.
  *
  * Safety, in order of the checks the caller gets back:
- *   - a session that is live in this process (open in a pane, running a turn,
- *     owned by an agent) is refused, including every subagent session that
- *     would go with it;
  *   - the session the call itself came from is refused;
- *   - an unresolvable session storage root is refused rather than guessed at.
+ *   - an unresolvable session storage root is refused rather than guessed at;
+ *   - a session that is live in this process (open in a pane, running a turn,
+ *     owned by an agent) is stopped and evicted before anything moves — one
+ *     target at a time, subagent sessions included — so the write handle is
+ *     released here instead of at process exit. Liveness is therefore reported
+ *     on the plan (`live`) and acted on by `execute`, not refused by `survey`.
+ *
+ * Orphans: a hidden subagent session whose parent is no longer in the session
+ * root has no sidebar row, and the parent's dialog was the only surface that
+ * ever named it — with the parent gone, nothing in the UI can reach it. `list`
+ * reports those under `orphans` so the recycle-bin panel can offer each one on
+ * its own, and `plan`/`move` take one like any other session: same two-step
+ * delete (bin now, real deletion on the next start), same restore. The exact
+ * definition, and why the bin needs no separate case, is on `orphanSessions`.
  *
  * The Host half imports nothing from the dsh installation: every collaborator
  * is reached as a Cordis service, so activation stays independent of module
@@ -181,7 +191,14 @@ class SessionPurger {
         return ok(await this.execute(surveyed.plan))
       }
       if (endpoint === 'list') {
-        return ok({ pending: await this.scanBin(), lastPurged: this.lastPurged ?? [], trashRoot: this.trashRoot() })
+        return ok({
+          pending: await this.scanBin(),
+          lastPurged: this.lastPurged ?? [],
+          trashRoot: this.trashRoot(),
+          // The one surface that can still name a hidden subagent session whose
+          // parent left the session root; the panel offers each id on its own.
+          orphans: await this.orphanSessions(),
+        })
       }
       if (endpoint === 'restore') {
         const pending = await this.scanBin()
@@ -206,6 +223,59 @@ class SessionPurger {
   }
 
   /**
+   * Every session header the persistence layer can currently see, by id.
+   *
+   * This is the session *root* catalog: a directory that was moved into the
+   * recycle bin is no longer part of it, which is what makes "the parent is in
+   * the bin" and "the parent was deleted for real" the same observation.
+   *
+   * @returns a `Map` from session id to its log header.
+   */
+  async sessionHeaders() {
+    const headers = new Map()
+    for (const snapshot of await this.ctx.sessionPersistence.list()) {
+      const header = snapshot?.header
+      if (header !== undefined && typeof header.id === 'string') headers.set(header.id, header)
+    }
+    return headers
+  }
+
+  /**
+   * Hidden subagent sessions whose parent is no longer in the session root.
+   *
+   * The definition is exactly two conditions and nothing more:
+   *   1. the header's `origin` is `'subagent'` — the hidden children a session's
+   *      own delete flow offers as an optional bundle, which never get a row;
+   *   2. the `parentSession` that names its owner is absent from the catalog
+   *      (or empty, in which case no parent could ever name it either).
+   *
+   * "Absent from the catalog" is deliberately the only test for the parent: the
+   * bin lives under the harness home, not under the session root, so moving the
+   * parent there and deleting it for real both take it out of the catalog. One
+   * test covers both, so there is no "the parent is in the bin" case — and no
+   * second place that could disagree with the first.
+   *
+   * These are the sessions nothing else can reach: hidden ones have no sidebar
+   * row, the parent's dialog was the only surface that ever named them, and a
+   * parent already out of the root cannot open that dialog again. Without this
+   * list they stay on disk with no way to select them.
+   *
+   * @returns the orphan ids, oldest first.
+   */
+  async orphanSessions() {
+    const headers = await this.sessionHeaders()
+    const orphans = []
+    for (const header of headers.values()) {
+      if (header.origin !== 'subagent') continue
+      const parent = typeof header.parentSession === 'string' ? header.parentSession : ''
+      if (parent !== '' && headers.has(parent)) continue
+      orphans.push({ id: header.id, createdAt: typeof header.createdAt === 'number' ? header.createdAt : 0 })
+    }
+    orphans.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    return orphans.map((orphan) => orphan.id)
+  }
+
+  /**
    * Resolve what a delete would touch, and refuse anything unsafe.
    * @param request - `sessionId`, optional `includeSubagents`, `callerSessionId`.
    * @returns `{ ok: true, plan }` or a refusal.
@@ -217,11 +287,7 @@ class SessionPurger {
       return { ok: false, code: 'session-purge/invalid-request', message: `sessionId is not a plain session id: ${JSON.stringify(sessionId)}`, details: {} }
     }
 
-    const headers = new Map()
-    for (const snapshot of await this.ctx.sessionPersistence.list()) {
-      const header = snapshot?.header
-      if (header !== undefined && typeof header.id === 'string') headers.set(header.id, header)
-    }
+    const headers = await this.sessionHeaders()
     if (!headers.has(sessionId)) {
       return { ok: false, code: 'session-purge/unknown-session', message: `session persistence holds no session ${sessionId}`, details: {} }
     }

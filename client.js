@@ -62,6 +62,9 @@ window.__ModuleLoader__.load({
       'bin.timing': '真正的删除发生在下次启动 DSH 时；在那之前，每一条都可以恢复。',
       'bin.restore': '恢复',
       'bin.restoring': '正在恢复…',
+      'bin.orphans': '孤儿子代理会话',
+      'bin.orphanMove': '放入回收站',
+      'bin.orphanMoving': '正在放入…',
       'bin.clear': '清空回收站',
       'bin.clearing': '正在清空…',
       'bin.close': '关闭',
@@ -98,6 +101,9 @@ window.__ModuleLoader__.load({
       'bin.timing': 'The real deletion happens on the next DSH start; until then every entry can be restored.',
       'bin.restore': 'Restore',
       'bin.restoring': 'Restoring…',
+      'bin.orphans': 'Orphan subagent sessions',
+      'bin.orphanMove': 'Move to the bin',
+      'bin.orphanMoving': 'Moving…',
       'bin.clear': 'Empty the bin',
       'bin.clearing': 'Emptying…',
       'bin.close': 'Close',
@@ -430,6 +436,7 @@ window.__ModuleLoader__.load({
     let listBin = async () => ({ ok: false, message: 'the plugin is not active yet' })
     let restoreBin = async () => ({ ok: false, message: 'the plugin is not active yet' })
     let emptyBin = async () => ({ ok: false, message: 'the plugin is not active yet' })
+    let moveBin = async () => ({ ok: false, message: 'the plugin is not active yet' })
     /**
      * Drops every persisted page key naming a session the Host deleted for real;
      * assigned in `apply`. It lives here rather than inside `apply` because the
@@ -507,11 +514,11 @@ window.__ModuleLoader__.load({
      */
     function RecycleBinOverlay({ t }) {
       const open = useBinOpen()
-      const [state, setState] = React.useState({ pending: [], error: null, busy: null, loaded: false })
+      const [state, setState] = React.useState({ pending: [], orphans: [], error: null, busy: null, loaded: false })
       const refresh = React.useCallback(() => {
         listBin({}).then((result) => {
-          if (result.ok === true) setState({ pending: result.value?.pending ?? [], error: null, busy: null, loaded: true })
-          else setState({ pending: [], error: result, busy: null, loaded: true })
+          if (result.ok === true) setState({ pending: result.value?.pending ?? [], orphans: result.value?.orphans ?? [], error: null, busy: null, loaded: true })
+          else setState({ pending: [], orphans: [], error: result, busy: null, loaded: true })
         })
       }, [])
       React.useEffect(() => {
@@ -528,7 +535,13 @@ window.__ModuleLoader__.load({
       if (open === false) return null
       const run = (endpoint, sessionId) => {
         setState((previous) => ({ ...previous, busy: sessionId ?? '*' }))
-        const call = endpoint === 'restore' ? restoreBin({ sessionId }) : emptyBin({})
+        // `restore` and `move` both act on exactly one session; `empty` is the
+        // whole bin. `move` is the same call the sidebar dialog makes, so an
+        // orphan travels the identical path: into the bin now, deleted for real
+        // on the next start, restorable until then.
+        const call = endpoint === 'restore' ? restoreBin({ sessionId })
+          : endpoint === 'move' ? moveBin({ sessionId })
+            : emptyBin({})
         call.then((result) => {
           // Emptying the bin deletes for real right now, so this answer carries
           // the only ids the page will ever see for those sessions.
@@ -557,6 +570,25 @@ window.__ModuleLoader__.load({
           onClick: () => run('restore', entry.id),
         }, state.busy === entry.id ? t('bin.restoring') : t('bin.restore')),
       ]))
+      // Hidden subagent sessions whose parent is no longer in the session list:
+      // they have no sidebar row and no dialog that names them, so this section
+      // is the only way to hand one to the same two-step delete. It renders only
+      // when there is something in it, so the panel stays as it was otherwise.
+      const orphanRows = state.orphans.map((id) => h('div', {
+        key: id,
+        className: 'session-purge-item',
+        style: { cursor: 'default', color: 'inherit' },
+      }, [
+        h('span', { key: 'label', className: 'session-purge-item-label' }, id),
+        h('button', {
+          key: 'move',
+          type: 'button',
+          className: 'session-purge-item',
+          style: buttonStyle,
+          disabled: state.busy !== null,
+          onClick: () => run('move', id),
+        }, state.busy === id ? t('bin.orphanMoving') : t('bin.orphanMove')),
+      ]))
       return h('div', { className: 'session-purge-modal', role: 'dialog', 'aria-modal': 'true' }, [
         h('div', {
           key: 'card',
@@ -575,6 +607,19 @@ window.__ModuleLoader__.load({
             ? h('p', { key: 'empty', className: 'session-purge-muted' }, t('bin.empty'))
             : null,
           h('div', { key: 'rows' }, rows),
+          state.orphans.length === 0 ? null : h('div', {
+            key: 'orphans',
+            style: {
+              marginTop: '14px', paddingTop: '12px',
+              borderTop: '0.5px solid var(--dsw-alias-border-l2, rgba(127,127,127,.3))',
+            },
+          }, [
+            h('h3', {
+              key: 'heading',
+              style: { margin: '0 0 8px', fontSize: '13px', fontWeight: '600' },
+            }, `${t('bin.orphans')} (${state.orphans.length})`),
+            h('div', { key: 'rows' }, orphanRows),
+          ]),
           h('div', { key: 'actions', style: { display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '14px' } }, [
             h('button', {
               key: 'clear',
@@ -674,6 +719,7 @@ window.__ModuleLoader__.load({
       listBin = (payload) => callHost('list', payload)
       restoreBin = (payload) => callHost('restore', payload)
       emptyBin = (payload) => callHost('empty', payload)
+      moveBin = (payload) => callHost('move', payload)
 
       ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
         name: 'sidebar.footer.action',

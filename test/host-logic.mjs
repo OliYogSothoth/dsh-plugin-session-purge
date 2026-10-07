@@ -6,16 +6,22 @@
  * 目的：宿主代码每改一次都要换一个模块 URL 才能在运行中的 DSH 里生效，
  * 所以先把逻辑在这里跑通，再去装。
  *
- * 用法：node runs\session-purge-harness.mjs
- * 只写 runs\_tmp-sdel\ 这个沙箱目录，不碰 ~\.dsh\sessions\。
+ * 用法：node test\host-logic.mjs
+ * 沙箱由 `mkdtempSync` 建在系统临时目录（%TEMP%）下，跑完自删；不碰
+ * `~\.dsh\sessions\`。
  */
+import { mkdtempSync } from 'node:fs'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { zstdCompressSync } from 'node:zlib'
 
-const HERE = dirname(fileURLToPath(import.meta.url))
-const SANDBOX = join(HERE, '_tmp-sdel')
+// A fresh directory per run, under the system temp root: the plugin's own
+// activation pass (`purgePending`) really deletes what the bin holds, so the
+// harness must never point `DSH_HOME` at the real one. `mkdtempSync` makes the
+// isolation unconditional — there is no path a caller can forget to set.
+const SANDBOX = mkdtempSync(join(tmpdir(), 'dsh-session-purge-test-'))
 const ROOT = join(SANDBOX, 'sessions')
 // The plugin keeps its recycle bin and manifest under the harness home; point
 // that at the sandbox so no test can reach the real one.
@@ -498,6 +504,112 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
     [noService, noRecord, failedRead]
       .map((cycle) => `${cycle.restored.body.ok}:${JSON.stringify(cycle.payload)}`)
       .join(' | '))
+}
+// ------------------------------------------------- orphan subagent sessions
+{
+  // `origin: 'subagent'` children never get a row, and the parent's dialog is the
+  // only surface that names them — so once the parent leaves the session root the
+  // child has no way in. The catalog here is *mutable* on purpose: the real
+  // `sessionPersistence.list()` only sees the session root, so moving a parent
+  // into the bin (or deleting it for real) removes it from the listing, and that
+  // single fact is what makes the child an orphan. Splicing mirrors exactly that.
+  const ORPHAN_A = 'session-66666666-6666-4666-8666-666666666666' // parent long gone
+  const ORPHAN_B = 'session-77777777-7777-4777-8777-777777777777' // no parentSession at all
+  const catalog = [
+    header(PARENT),
+    header(CHILD, { parentSession: PARENT, origin: 'subagent' }),
+    header(FORK, { parentSession: PARENT }),
+    header(ORPHAN_A, { parentSession: 'session-99999999-9999-4999-8999-999999999999', origin: 'subagent' }),
+    header(ORPHAN_B, { origin: 'subagent' }),
+  ]
+  const registry = { list: () => [], archivedSessionIds: [], pinnedSessionIds: [] }
+  const cache = { get: () => undefined }
+  const { ctx, route } = makeCtx({ snapshots: catalog, registry, cache })
+  apply(ctx)
+  await rm(join(ROOT, PROJECT, ORPHAN_A), { recursive: true, force: true })
+  await rm(join(ROOT, PROJECT, ORPHAN_B), { recursive: true, force: true })
+  await seed(ORPHAN_A)
+  await seed(ORPHAN_B)
+  await rm(childDir, { recursive: true, force: true })
+  await seed(CHILD)
+  await resetBin()
+
+  const first = await call(route(), 'list', {})
+  check('an orphan whose parent is gone from the catalog is listed',
+    first.body.value?.orphans?.includes(ORPHAN_A), JSON.stringify(first.body.value?.orphans))
+  check('a subagent with no parentSession at all is listed too',
+    first.body.value?.orphans?.includes(ORPHAN_B), JSON.stringify(first.body.value?.orphans))
+  check('a subagent whose parent is still in the catalog is not listed',
+    first.body.value?.orphans?.includes(CHILD) === false, JSON.stringify(first.body.value?.orphans))
+  check('a visible fork is never an orphan',
+    first.body.value?.orphans?.includes(FORK) === false, JSON.stringify(first.body.value?.orphans))
+
+  // The orphan travels the ordinary path: plan accepts it (no subagent bundle to
+  // add), and move puts its directory in the bin — the same two-step delete.
+  const planned = await call(route(), 'plan', { sessionId: ORPHAN_A })
+  check('plan accepts an orphan and counts no subagents',
+    planned.body.ok === true
+      && planned.body.value?.targets?.length === 1
+      && planned.body.value?.targets?.[0]?.id === ORPHAN_A
+      && planned.body.value?.subagentCount === 0,
+    JSON.stringify(planned.body.value?.targets?.map((t) => t.id)))
+  const movedOrphan = await call(route(), 'move', { sessionId: ORPHAN_A })
+  check('move puts an orphan into the recycle bin like any other session',
+    movedOrphan.body.ok === true
+      && movedOrphan.body.value?.sessions?.[0]?.moved?.length === 1
+      && movedOrphan.body.value.sessions[0].moved[0].to.includes('session-purge-trash')
+      && await stat(join(ROOT, PROJECT, ORPHAN_A)).then(() => false, () => true),
+    JSON.stringify(movedOrphan.body.value?.sessions?.[0]?.moved))
+
+  // The user's exact case: the parent is moved *alone* (the subagent box was
+  // unticked), so the child stays in the root with no parent in the catalog.
+  await rm(parentDir, { recursive: true, force: true })
+  await seed(PARENT)
+  const movedParentAlone = await call(route(), 'move', { sessionId: PARENT })
+  catalog.splice(catalog.findIndex((h) => h.id === PARENT), 1)
+  const afterParentLeft = await call(route(), 'list', {})
+  check('unticking the subagent box leaves the child behind, which then reads as an orphan',
+    movedParentAlone.body.ok === true
+      && await stat(childDir).then(() => true, () => false)
+      && afterParentLeft.body.value?.orphans?.includes(CHILD),
+    JSON.stringify(afterParentLeft.body.value?.orphans))
+  const movedChild = await call(route(), 'move', { sessionId: CHILD })
+  check('that leftover child can then be binned on its own',
+    movedChild.body.ok === true
+      && movedChild.body.value?.sessions?.[0]?.moved?.length === 1
+      && await stat(childDir).then(() => false, () => true),
+    JSON.stringify(movedChild.body.value?.sessions?.[0]?.moved))
+  const restoredChild = await call(route(), 'restore', { sessionId: CHILD })
+  check('an orphan restores the same way: the directory comes back',
+    restoredChild.body.ok === true && await stat(childDir).then(() => true, () => false),
+    JSON.stringify(restoredChild.body))
+
+  // Negative controls: the surfaces that do refuse still refuse, and an orphan
+  // that is live in this process still goes through the stop-and-evict path
+  // rather than around it.
+  const refusedCaller = await call(route(), 'move', { sessionId: ORPHAN_B, callerSessionId: ORPHAN_B })
+  check('refusing the caller session still applies to an orphan',
+    refusedCaller.body.ok === false && refusedCaller.body.error.code === 'session-purge/caller-session',
+    JSON.stringify(refusedCaller.body.error))
+  const missing = await call(route(), 'plan', { sessionId: 'session-88888888-8888-4888-8888-888888888888' })
+  check('an id that is in no catalog is still refused', missing.body.ok === false, JSON.stringify(missing.body.error))
+
+  await rm(join(ROOT, PROJECT, ORPHAN_B), { recursive: true, force: true })
+  await seed(ORPHAN_B)
+  await resetBin()
+  const live = makeCtx({ snapshots: catalog, sessions: [ORPHAN_B], registry, cache })
+  apply(live.ctx)
+  const livePlan = await call(live.route(), 'plan', { sessionId: ORPHAN_B })
+  check('a live orphan is reported as live on the plan',
+    livePlan.body.value?.targets?.[0]?.live === true,
+    JSON.stringify(livePlan.body.value?.targets))
+  const movedLive = await call(live.route(), 'move', { sessionId: ORPHAN_B })
+  check('a live orphan is stopped and evicted before it moves, not waved through',
+    movedLive.body.ok === true
+      && live.stops.join() === `workspace/session-stop:${ORPHAN_B}`
+      && live.evicted.join() === ORPHAN_B
+      && movedLive.body.value?.sessions?.[0]?.moved?.length === 1,
+    `ok=${movedLive.body.ok} stops=${live.stops.join()} evicted=${live.evicted.join()}`)
 }
 // -------------------------------------------------------------------- verdict
 const failed = results.filter((r) => !r.pass)
