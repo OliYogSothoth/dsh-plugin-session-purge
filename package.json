@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-session-purge",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "license": "MIT",
   "description": "Delete DeepSeek Harness sessions for good - via a recycle bin: move, restore, then the next start wipes the log, projection cache, spill files and workspace accounting.",

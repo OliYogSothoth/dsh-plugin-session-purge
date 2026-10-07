@@ -39,7 +39,8 @@
 
 ## 实现要点
 
-- **宿主半边**注册一条精确 Fetch 路由 `api/session-purge`（挂在已就绪的 `/api` 载体上），端点五个：`plan`（只出清单）· `move`（放进回收站）· `list`（回收站 + 孤儿子代理清单）· `restore`（移回原位）· `empty`（立刻真删）。走这条载体意味着**鉴权（Host/Origin 校验 + 浏览器 cookie）在进入处理函数之前就已完成**。
+- **投影缓存只读两处，且是同一个方法**：`restoredProjections(header)` —— ① 恢复回执里带上 `title` / `sessionListMetadata`（恢复瞬间标题就正常）；② 回收站面板的列表里，给**回收站每一行**与**每个孤儿子代理行**附上 `title`。两处都只走缓存自己的 `cachedSnapshot(header, [...])` 只读面、只问已知键、**从不写、从不种**；取不到（服务缺失 / 无记录 / 读抛错 / 日志头读不出）一律留空 `title: ''`，面板随即回落显示**会话 id**（有标题时 id 仍作为灰色小字显示）。**除这两处之外没有任何代码读投影缓存。**
+- **宿主半边**注册一条精确 Fetch 路由 `api/session-purge`（挂在已就绪的 `/api` 载体上），端点五个：`plan`（只出清单）· `move`（放进回收站）· `list`（回收站 + 孤儿子代理清单 + 各自的标题）· `restore`（移回原位）· `empty`（立刻真删）。走这条载体意味着**鉴权（Host/Origin 校验 + 浏览器 cookie）在进入处理函数之前就已完成**。
 - **客户端半边**注册两处：会话「…」菜单一行（`sidebar.workspaces.session.menu.item`，order 500）+ 一个浮层确认框（`shell.overlay`）。只 `require('react')`，不加载任何 Harness 客户端包；颜色只用 `--dsw-alias-*` 主题 token（带字面量回退），token 改名只会掉色、不会坏。
 
 ## 两段式删除

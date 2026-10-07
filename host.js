@@ -192,7 +192,10 @@ class SessionPurger {
       }
       if (endpoint === 'list') {
         return ok({
-          pending: await this.scanBin(),
+          // Each row carries the title its own cache record holds, so the panel
+          // shows a name instead of an id; an empty title is the panel's cue to
+          // fall back to the id.
+          pending: await this.titledBinEntries(await this.scanBin()),
           lastPurged: this.lastPurged ?? [],
           trashRoot: this.trashRoot(),
           // The one surface that can still name a hidden subagent session whose
@@ -260,7 +263,7 @@ class SessionPurger {
    * parent already out of the root cannot open that dialog again. Without this
    * list they stay on disk with no way to select them.
    *
-   * @returns the orphan ids, oldest first.
+   * @returns the orphan ids with their cached titles, oldest first.
    */
   async orphanSessions() {
     const headers = await this.sessionHeaders()
@@ -269,10 +272,35 @@ class SessionPurger {
       if (header.origin !== 'subagent') continue
       const parent = typeof header.parentSession === 'string' ? header.parentSession : ''
       if (parent !== '' && headers.has(parent)) continue
-      orphans.push({ id: header.id, createdAt: typeof header.createdAt === 'number' ? header.createdAt : 0 })
+      orphans.push({
+        id: header.id,
+        createdAt: typeof header.createdAt === 'number' ? header.createdAt : 0,
+        title: this.cachedTitle(header),
+      })
     }
     orphans.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
-    return orphans.map((orphan) => orphan.id)
+    return orphans.map((orphan) => ({ id: orphan.id, title: orphan.title }))
+  }
+
+  /**
+   * Attach each binned session's cached title.
+   *
+   * The header is read out of the log that travelled into the bin with the
+   * directory — the same head read the restore does, from the same place — so
+   * the lifecycle witness is the session's own and never a guess from the
+   * directory name. An unreadable head and a missing cache record are the same
+   * answer: `title: ''`, and the panel shows the id.
+   *
+   * @param pending - the entries `scanBin` returned.
+   * @returns the same entries with `title` added.
+   */
+  async titledBinEntries(pending) {
+    const titled = []
+    for (const entry of pending) {
+      const header = await readSessionHeader(join(this.trashRoot(), entry.projectDir, entry.id))
+      titled.push({ ...entry, title: header === undefined ? '' : this.cachedTitle(header) })
+    }
+    return titled
   }
 
   /**
@@ -580,13 +608,42 @@ class SessionPurger {
   }
 
   /**
+   * The cached title of one session, read-only, or `''`.
+   *
+   * The panel needs a human label for rows that have no live frame — a binned
+   * session and an orphan subagent are both exactly that — and the narrow read
+   * below already answers the question, so this is its second caller rather than
+   * a second read shape: same service, same `cachedSnapshot` face, same two keys,
+   * same "no cache / no record / refused schema / thrown read" collapse.
+   *
+   * Absence is a normal answer here, never an error: an empty string means the
+   * caller shows the session id instead. Nothing is ever seeded or written, and
+   * no title is guessed from the directory name.
+   *
+   * @param header - the session's own log header (the lifecycle witness).
+   * @returns the cached title, or `''`.
+   */
+  cachedTitle(header) {
+    try {
+      const title = this.restoredProjections(header)?.values?.title
+      return typeof title === 'string' ? title : ''
+    } catch {
+      return ''
+    }
+  }
+
+  /**
    * The listing projections of one restored session, read-only.
    *
-   * THIS IS THE PLUGIN'S ONLY PROJECTION-CACHE READ, and it exists for exactly
-   * one reason: the notice above is the only thing that puts the row back, and a
-   * row without its cached title reads as untitled until the next list response.
-   * The cache is otherwise untouched by design — the move must not need it, and
-   * the purge deletes through the storage domain without ever reading a value.
+   * ONE OF THE PLUGIN'S TWO PROJECTION-CACHE READS — both of them this one
+   * method, and both read-only: this caller arms the restore notice, and
+   * `cachedTitle` labels the bin/orphan rows of the panel. There is no third
+   * read, and no write anywhere: the move must not need the cache, and the purge
+   * deletes through the storage domain without ever reading a value.
+   *
+   * The notice is why the first caller exists at all: it is the only thing that
+   * puts the row back, and a row without its cached title reads as untitled until
+   * the next list response.
    *
    * Three things keep the read narrow:
    *

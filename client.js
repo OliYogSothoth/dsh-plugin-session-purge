@@ -467,6 +467,28 @@ window.__ModuleLoader__.load({
       return open
     }
 
+    /**
+     * What one panel row shows.
+     *
+     * The Host sends the title its cache record holds, and `''` when there is
+     * none (no record, unreadable head, cache unavailable). A row must never
+     * render blank, so an empty title falls back to the session id; when the
+     * title did take the main slot the id stays visible as the secondary line,
+     * because ids are what the bin's directory tree and the Host logs speak in.
+     *
+     * Pure, and exported alongside `apply` for the harness (`apply`/`inject` are
+     * all the module loader reads), so both directions are assertable without a
+     * browser.
+     *
+     * @param entry - one row from the Host: `{ id, title }`.
+     * @returns `{ primary, secondary }`, `secondary` null when the id is primary.
+     */
+    function rowLabel(entry) {
+      const id = typeof entry?.id === 'string' ? entry.id : ''
+      const title = typeof entry?.title === 'string' ? entry.title.trim() : ''
+      return title === '' ? { primary: id, secondary: null } : { primary: title, secondary: id }
+    }
+
     /** Sidebar-foot action: the way into the recycle bin. */
     function RecycleBinAction({ t }) {
       const open = useBinOpen()
@@ -555,12 +577,27 @@ window.__ModuleLoader__.load({
         })
       }
       const buttonStyle = { flex: 'none', width: 'auto', padding: '3px 10px' }
+      // One row label for both sections: title first, id as the muted second
+      // line, id alone when the Host had no title to send.
+      const labelOf = (entry) => {
+        const shown = rowLabel(entry)
+        return h('span', { key: 'label', className: 'session-purge-item-label' }, shown.secondary === null
+          ? shown.primary
+          : [
+            shown.primary,
+            h('span', {
+              key: 'id',
+              className: 'session-purge-muted',
+              style: { marginLeft: '8px', fontSize: '11px' },
+            }, shown.secondary),
+          ])
+      }
       const rows = state.pending.map((entry) => h('div', {
         key: entry.id,
         className: 'session-purge-item',
         style: { cursor: 'default', color: 'inherit' },
       }, [
-        h('span', { key: 'label', className: 'session-purge-item-label' }, entry.id),
+        labelOf(entry),
         h('button', {
           key: 'restore',
           type: 'button',
@@ -574,20 +611,20 @@ window.__ModuleLoader__.load({
       // they have no sidebar row and no dialog that names them, so this section
       // is the only way to hand one to the same two-step delete. It renders only
       // when there is something in it, so the panel stays as it was otherwise.
-      const orphanRows = state.orphans.map((id) => h('div', {
-        key: id,
+      const orphanRows = state.orphans.map((entry) => h('div', {
+        key: entry.id,
         className: 'session-purge-item',
         style: { cursor: 'default', color: 'inherit' },
       }, [
-        h('span', { key: 'label', className: 'session-purge-item-label' }, id),
+        labelOf(entry),
         h('button', {
           key: 'move',
           type: 'button',
           className: 'session-purge-item',
           style: buttonStyle,
           disabled: state.busy !== null,
-          onClick: () => run('move', id),
-        }, state.busy === id ? t('bin.orphanMoving') : t('bin.orphanMove')),
+          onClick: () => run('move', entry.id),
+        }, state.busy === entry.id ? t('bin.orphanMoving') : t('bin.orphanMove')),
       ]))
       return h('div', { className: 'session-purge-modal', role: 'dialog', 'aria-modal': 'true' }, [
         h('div', {
@@ -747,6 +784,6 @@ window.__ModuleLoader__.load({
       }, SessionPurgerOverlay))
     }
 
-    return { inject, apply }
+    return { inject, apply, rowLabel }
   },
 })

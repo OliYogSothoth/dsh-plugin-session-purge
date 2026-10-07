@@ -27,6 +27,7 @@ const ROOT = join(SANDBOX, 'sessions')
 // that at the sandbox so no test can reach the real one.
 process.env.DSH_HOME = SANDBOX
 const PLUGIN = fileURLToPath(new URL('../host.js', import.meta.url))
+const CLIENT = fileURLToPath(new URL('../client.js', import.meta.url))
 
 const results = []
 const check = (name, condition, detail = '') => {
@@ -534,15 +535,16 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
   await seed(CHILD)
   await resetBin()
 
+  const orphanIds = (value) => (value?.orphans ?? []).map((entry) => entry.id)
   const first = await call(route(), 'list', {})
   check('an orphan whose parent is gone from the catalog is listed',
-    first.body.value?.orphans?.includes(ORPHAN_A), JSON.stringify(first.body.value?.orphans))
+    orphanIds(first.body.value).includes(ORPHAN_A), JSON.stringify(first.body.value?.orphans))
   check('a subagent with no parentSession at all is listed too',
-    first.body.value?.orphans?.includes(ORPHAN_B), JSON.stringify(first.body.value?.orphans))
+    orphanIds(first.body.value).includes(ORPHAN_B), JSON.stringify(first.body.value?.orphans))
   check('a subagent whose parent is still in the catalog is not listed',
-    first.body.value?.orphans?.includes(CHILD) === false, JSON.stringify(first.body.value?.orphans))
+    orphanIds(first.body.value).includes(CHILD) === false, JSON.stringify(first.body.value?.orphans))
   check('a visible fork is never an orphan',
-    first.body.value?.orphans?.includes(FORK) === false, JSON.stringify(first.body.value?.orphans))
+    orphanIds(first.body.value).includes(FORK) === false, JSON.stringify(first.body.value?.orphans))
 
   // The orphan travels the ordinary path: plan accepts it (no subagent bundle to
   // add), and move puts its directory in the bin — the same two-step delete.
@@ -571,7 +573,7 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
   check('unticking the subagent box leaves the child behind, which then reads as an orphan',
     movedParentAlone.body.ok === true
       && await stat(childDir).then(() => true, () => false)
-      && afterParentLeft.body.value?.orphans?.includes(CHILD),
+      && orphanIds(afterParentLeft.body.value).includes(CHILD),
     JSON.stringify(afterParentLeft.body.value?.orphans))
   const movedChild = await call(route(), 'move', { sessionId: CHILD })
   check('that leftover child can then be binned on its own',
@@ -610,6 +612,89 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
       && live.evicted.join() === ORPHAN_B
       && movedLive.body.value?.sessions?.[0]?.moved?.length === 1,
     `ok=${movedLive.body.ok} stops=${live.stops.join()} evicted=${live.evicted.join()}`)
+}
+// ------------------------------------------------------ titles in the panel
+{
+  // The panel shows the title the session's own cache record holds, and falls
+  // back to the id when there is none. The Host reads it through the same narrow
+  // method the restore notice uses; this block fakes that cache and checks both
+  // directions — including the client's pure fallback, loaded out of client.js.
+  const TITLED = 'session-aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+  const UNTITLED = 'session-aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaa2'
+  const ORPHAN_TITLED = 'session-aaaaaaa3-aaaa-4aaa-8aaa-aaaaaaaaaaa3'
+  const ORPHAN_PLAIN = 'session-aaaaaaa4-aaaa-4aaa-8aaa-aaaaaaaaaaa4'
+  const catalog = [
+    header(TITLED),
+    header(UNTITLED),
+    header(ORPHAN_TITLED, { parentSession: 'session-bbbbbbb1-bbbb-4bbb-8bbb-bbbbbbbbbbb1', origin: 'subagent' }),
+    header(ORPHAN_PLAIN, { parentSession: 'session-bbbbbbb2-bbbb-4bbb-8bbb-bbbbbbbbbbb2', origin: 'subagent' }),
+  ]
+  const titled = new Map([[TITLED, 'A titled session'], [ORPHAN_TITLED, 'A titled orphan']])
+  const asked = []
+  const projectionCache = {
+    cachedSnapshot: (meta, keys) => {
+      asked.push({ id: meta?.id, keys: (keys ?? []).join('+') })
+      const title = titled.get(meta?.id)
+      return title === undefined ? undefined : { asOfSeq: 4, values: { title } }
+    },
+  }
+  const registry = { list: () => [], archivedSessionIds: [], pinnedSessionIds: [] }
+  const { ctx, route } = makeCtx({
+    snapshots: catalog,
+    registry,
+    cache: { get: () => undefined },
+    projectionCache,
+  })
+  apply(ctx)
+  await resetBin()
+  // TITLED gets a real log head; UNTITLED keeps the unreadable stub, so one row
+  // exercises the cache read and the other the "head unreadable" fallback.
+  await rm(join(ROOT, PROJECT, TITLED), { recursive: true, force: true })
+  await seed(TITLED, { log: { name: 'session.v4.jsonl', bytes: logLine(header(TITLED, { cwd: 'C:/demo' })) } })
+  await seed(UNTITLED)
+  await seed(ORPHAN_TITLED)
+  await seed(ORPHAN_PLAIN)
+  await call(route(), 'move', { sessionId: TITLED })
+  await call(route(), 'move', { sessionId: UNTITLED })
+  const listed = await call(route(), 'list', {})
+  const byId = new Map((listed.body.value?.pending ?? []).map((entry) => [entry.id, entry]))
+  check('a binned session reports the title its cache record holds',
+    byId.get(TITLED)?.title === 'A titled session', JSON.stringify(byId.get(TITLED)))
+  check('a binned session with no readable head and no cache record reports an empty title, not an error',
+    byId.get(UNTITLED)?.title === '', JSON.stringify(byId.get(UNTITLED)))
+  const orphanById = new Map((listed.body.value?.orphans ?? []).map((entry) => [entry.id, entry]))
+  check('an orphan reports its cached title too',
+    orphanById.get(ORPHAN_TITLED)?.title === 'A titled orphan', JSON.stringify(listed.body.value?.orphans))
+  check('an orphan with no cache record keeps an empty title and is still listed',
+    orphanById.has(ORPHAN_PLAIN) && orphanById.get(ORPHAN_PLAIN).title === '',
+    JSON.stringify(listed.body.value?.orphans))
+  // The read stays the narrow shape it always was: the two known keys, through
+  // the cache's own listing face, and nothing else — the fake exposes no write
+  // at all, so any write attempt would have degraded every title to ''. The
+  // unreadable-head row is *not* asked about: there is no lifecycle witness to
+  // hand the cache, so the read is skipped rather than guessed.
+  check('every title read asks for the same two keys through cachedSnapshot, and a headless row is never asked about',
+    asked.length === 3
+      && asked.every((call) => call.keys === 'title+sessionListMetadata')
+      && asked.some((call) => call.id === TITLED)
+      && !asked.some((call) => call.id === UNTITLED),
+    JSON.stringify(asked))
+
+  // The client half's rule, executed straight out of client.js with a two-line
+  // loader shim: no browser, no React render, both branches covered.
+  let loaded
+  globalThis.window = { __ModuleLoader__: { load: (definition) => { loaded = definition } } }
+  await import(pathToFileURL(CLIENT).href)
+  const client = loaded.factory((name) => (name === 'react' ? { createElement: () => ({}) } : undefined))
+  check('the client shows the title, with the id as the secondary line',
+    JSON.stringify(client.rowLabel({ id: TITLED, title: 'A titled session' }))
+      === JSON.stringify({ primary: 'A titled session', secondary: TITLED }),
+    JSON.stringify(client.rowLabel({ id: TITLED, title: 'A titled session' })))
+  check('the client falls back to the session id whenever the title is missing or blank',
+    JSON.stringify(client.rowLabel({ id: UNTITLED, title: '' })) === JSON.stringify({ primary: UNTITLED, secondary: null })
+      && JSON.stringify(client.rowLabel({ id: UNTITLED })) === JSON.stringify({ primary: UNTITLED, secondary: null })
+      && JSON.stringify(client.rowLabel({ id: UNTITLED, title: '   ' })) === JSON.stringify({ primary: UNTITLED, secondary: null }),
+    JSON.stringify([client.rowLabel({ id: UNTITLED, title: '' }), client.rowLabel({ id: UNTITLED }), client.rowLabel({ id: UNTITLED, title: '   ' })]))
 }
 // -------------------------------------------------------------------- verdict
 const failed = results.filter((r) => !r.pass)
