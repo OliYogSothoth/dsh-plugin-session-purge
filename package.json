@@ -11,6 +11,10 @@
     "session",
     "delete"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OliYogSothoth/dsh-plugin-session-purge.git"
+  },
   "icon": "./icon.svg",
   "exports": {
     ".": "./host.js",
