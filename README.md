@@ -54,24 +54,40 @@
 **位置**：`<DSH_HOME>\session-purge-trash\<项目目录>\<会话id>\`（`DSH_HOME` 默认 `~/.dsh`）。
 
 **卸载前请先清空回收站**（面板里的「清空回收站」就是立刻真删）。卸载后没有任何代码在跑，回收站只能手动处理：删掉目录 = 真删；把里面的会话目录移回 `<DSH_HOME>\sessions\<同一个项目目录>\` = 恢复。
-## 从 GitHub 安装
 
-在 DSH 的「添加插件」里填入仓库地址即可（不需要 npm 账号）：
+## 安装
+
+**填仓库地址就够了** —— 在 DSH 的 **插件 → 添加插件** 里粘进这一行（那一步接受"包名 / GitHub 仓库地址 / 本地目录路径"三种输入，这里用仓库地址）：
 
 ```
 https://github.com/OliYogSothoth/dsh-plugin-session-purge
 ```
 
-装完重启 Harness。源码就在这个仓库里，改完重新装或直接刷新页面即可看到客户端改动（宿主改动需重启）。
-## 安装
+命令行等价写法：
 
 ```
-plugin_manager → install_bundle → target: <本包目录的绝对路径>
+dsh plugin --profile web add github:OliYogSothoth/dsh-plugin-session-purge
 ```
 
-等价于界面上的「插件 → 添加插件 → 本地目录路径」。
+装完**重启 Harness**。这条路会把包**复制一份**进 profile ⇒ **你不需要保留任何本地目录**。
 
-> ⚠️ **源码目录要长期留着**：本地目录安装走的是 pnpm 的 `link:` 依赖 —— 包的内容**不会**被复制进 profile，profile 里只是指向这个目录；删掉它，插件即失效。（从 npm 包名 / GitHub 安装则是复制一份，没有这个约束。）
+> 目前只在 GitHub 上（还没有 npm 包名）。
+
+### 本地目录安装（自己改源码时才用）
+
+只有**你改了源码、要让改动立刻生效**才走这条路：它用 pnpm 的 `link:`，profile 里只指向你的源码目录。所以先把那个"本地路径"从哪来说清楚：
+
+1. **把仓库拿到本地**（这一步才产生"本地目录"）：
+   ```
+   git clone https://github.com/OliYogSothoth/dsh-plugin-session-purge
+   ```
+2. **把 clone 出来的那个目录的绝对路径**填进「插件 → 添加插件 → 本地目录路径」（或等价的 `plugin_manager → install_bundle → target: <该路径>`），例如：
+   ```
+   C:\Users\你\Documents\dsh-plugin-session-purge
+   ```
+
+> ⚠️ **只有这条路需要源码目录长期留着**：包的内容**不会**被复制进 profile，删掉目录插件就失效。
+> 改完怎么生效：`client.js` **刷新页面**即可；`host.js` **必须重启 Harness**（同名重装不生效）。
 
 ## 卸载
 
