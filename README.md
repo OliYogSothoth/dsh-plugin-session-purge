@@ -1,5 +1,7 @@
 # dsh-plugin-session-purge
 
+中文 | [English](README.en.md)
+
 **两步删除会话。** DSH 只会归档会话 —— `dsh-client-ui-workspace` 的 README 明写 *"No Session deletion — sessions can be archived but never deleted"*；这个插件补上删除。
 
 ## 入口
@@ -13,13 +15,15 @@
 
 ## 删什么
 
-按会话分别清掉三处：
+被真正删除时，按会话分别清掉三处：
 
 1. **工作区登记** —— 每个 Workspace 的 `sessionIds`、全局的归档集合与置顶集合。走 WorkspaceRegistry / WorkspaceHandle.detachSession 自己的 API 写，**不由插件直接改** workspace.json。
 2. **投影缓存** —— 走 storage domain 自己的表（`session_projcache` / `sessions`）的 `delete`，内存表与磁盘文档一起掉。
 3. **会话目录** —— 会话存储根下的 `<项目键>/<会话 id>/`，里面是压缩后的会话日志全部世代。
 
 会话存储根取 `sessionPersistence.root`（JSONL 后端配置的那个），取不到就退回 `DSH_HOME/sessions`；**两个都取不到就拒绝删除**，不猜路径。
+
+> **何时删**：上面这三处**不是在点菜单那一刻清的** —— 点「放入回收站」只是把目录移走（不删任何字节、可恢复），真正删除发生在**下次启动 DSH** 时。见下面「两段式删除」。
 
 ## 不删什么
 
@@ -57,21 +61,21 @@
 
 ## 安装
 
-**填仓库地址就够了** —— 在 DSH 的 **插件 → 添加插件** 里粘进这一行（那一步接受"包名 / GitHub 仓库地址 / 本地目录路径"三种输入，这里用仓库地址）：
+**在界面上点**：DSH 的 **插件** 页 → 右上 **添加插件** → 把下面这行粘进去 → **安装**：
 
 ```
 https://github.com/OliYogSothoth/dsh-plugin-session-purge
 ```
 
-命令行等价写法：
-
-```
-dsh plugin --profile web add github:OliYogSothoth/dsh-plugin-session-purge
-```
-
 装完**重启 Harness**。这条路会把包**复制一份**进 profile ⇒ **你不需要保留任何本地目录**。
 
 > 目前只在 GitHub 上（还没有 npm 包名）。
+
+> **给 agent 的等价写法**（你让模型替你装时才用；`plugin_manager` 是 DSH 暴露给模型的工具，它和界面按钮走**同一套底层服务**）：
+> ```
+> plugin_manager → install_bundle → target: github:OliYogSothoth/dsh-plugin-session-purge
+> ```
+> 或者命令行：`dsh plugin --profile web add github:OliYogSothoth/dsh-plugin-session-purge`
 
 ### 本地目录安装（自己改源码时才用）
 
@@ -81,7 +85,7 @@ dsh plugin --profile web add github:OliYogSothoth/dsh-plugin-session-purge
    ```
    git clone https://github.com/OliYogSothoth/dsh-plugin-session-purge
    ```
-2. **把 clone 出来的那个目录的绝对路径**填进「插件 → 添加插件 → 本地目录路径」（或等价的 `plugin_manager → install_bundle → target: <该路径>`），例如：
+2. **把 clone 出来的那个目录的绝对路径**填进「插件 → 添加插件」，例如：
    ```
    C:\Users\你\Documents\dsh-plugin-session-purge
    ```
@@ -91,11 +95,14 @@ dsh plugin --profile web add github:OliYogSothoth/dsh-plugin-session-purge
 
 ## 卸载
 
-```
-plugin_manager → remove_bundle → target: dsh-plugin-session-purge
-```
+**在界面上点**：DSH 的 **插件** 页 → 找到 `dsh-plugin-session-purge` → **卸载**。
 
 只解除挂载；**不会**回滚已经删掉的会话。
+
+> **给 agent 的等价写法**（你让模型替你操作时才用；它和界面按钮走**同一套底层服务**，而且因为改的是 profile、跨会话生效，它会先要一次提权审批）：
+> ```
+> plugin_manager → remove_bundle → target: dsh-plugin-session-purge
+> ```
 
 ## 文件
 
@@ -106,3 +113,4 @@ plugin_manager → remove_bundle → target: dsh-plugin-session-purge
 | `cordis.patch.yml` | bundle patch：插入本插件这一行 |
 | `locale/zh.json` · `locale/en.json` | 插件页卡片上的标题与说明 |
 | `icon.svg` | 插件页图标 |
+| `README.md` · `README.en.md` | 中文说明（主）· 英文说明 |

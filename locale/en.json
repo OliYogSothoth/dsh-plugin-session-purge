@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Delete sessions for good",
-    "description": "Adds \"Delete session permanently\" to a Session's \"...\" menu: the log directory, the projection cache and the workspace accounting go together, irreversibly. Also gives the agent a session_delete tool."
+    "description": "Adds \"Move to recycle bin\" to a session's \"…\" menu: nothing is deleted and it can be restored; the next DSH start wipes its log, projection cache, spill files and workspace accounting. A recycle-bin panel at the sidebar footer restores or empties it."
   }
 }
