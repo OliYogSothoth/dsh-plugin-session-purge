@@ -32,7 +32,7 @@ The storage root comes from `sessionPersistence.root` (the one the JSONL backend
 
 ## Safety gates
 
-- If the set being deleted contains **the very session the call runs in** → refused.
+- If the caller **declares its own session** (`callerSessionId`) and the set being deleted contains it → refused. The hand-clicked UI path declares no such identity (it is not a session), so it is never limited by this.
 - If the session storage root cannot be resolved → refused, no path is guessed.
 - A session that is **live** in the process (a pane is open, it is running, an agent holds it) is *not* refused. Its work is stopped and its in-memory host entry evicted **before** any file is touched — otherwise on Windows the write handle stays open until the process exits and the files simply cannot be removed. `plan` marks `live` on every target.
 - Clicking "Move to recycle bin" first fetches `plan` (the directories involved, plus how many subagent sessions would be carried along), shows it in a confirmation dialog, and only then runs `move`.

@@ -28,7 +28,9 @@
  *     drops the rows of any log it can no longer see.
  *
  * Safety, in order of the checks the caller gets back:
- *   - the session the call itself came from is refused;
+ *   - a session the caller declares as its own (`callerSessionId`) is refused;
+ *     the hand-clicked UI path declares no such identity, so it is never
+ *     limited by this check;
  *   - an unresolvable session storage root is refused rather than guessed at;
  *   - a session that is live in this process (open in a pane, running a turn,
  *     owned by an agent) is stopped and evicted before anything moves — one
@@ -336,7 +338,7 @@ class SessionPurger {
     // A session that is merely *open* is no longer an obstacle: `execute`
     // stops its work and evicts its in-memory entry before touching any file,
     // which releases the write handle here instead of at process exit. Only
-    // the caller's own session stays off limits.
+    // a session the caller declares as its own stays off limits.
     const live = new Set(targets.filter((header) => this.isLive(header.id)).map((header) => header.id))
 
     const callerSessionId = typeof request.callerSessionId === 'string' ? request.callerSessionId : undefined
