@@ -59,9 +59,11 @@ window.__ModuleLoader__.load({
       'bin.title': '会话回收站',
       'bin.loading': '正在读取回收站…',
       'bin.empty': '回收站是空的。放入回收站的会话会在这里等着，直到下次启动 DSH 时被真正删除。',
-      'bin.timing': '真正的删除发生在下次启动 DSH 时；在那之前，每一条都可以恢复。',
+      'bin.timing': '真正的删除发生在下次启动 DSH 时；在那之前，每一条都可以恢复。每行的「立刻删除」跳过等待，现在就删。',
       'bin.restore': '恢复',
       'bin.restoring': '正在恢复…',
+      'bin.purge': '立刻删除',
+      'bin.purging': '正在删除…',
       'bin.orphans': '孤儿子代理会话',
       'bin.orphanMove': '放入回收站',
       'bin.orphanMoving': '正在放入…',
@@ -98,9 +100,11 @@ window.__ModuleLoader__.load({
       'bin.title': 'Session recycle bin',
       'bin.loading': 'Reading the recycle bin…',
       'bin.empty': 'The recycle bin is empty. Sessions you move here wait until DSH starts again, which is when they are deleted for real.',
-      'bin.timing': 'The real deletion happens on the next DSH start; until then every entry can be restored.',
+      'bin.timing': 'The real deletion happens on the next DSH start; until then every entry can be restored. A row\'s "Delete now" skips the wait and deletes it for real right away.',
       'bin.restore': 'Restore',
       'bin.restoring': 'Restoring…',
+      'bin.purge': 'Delete now',
+      'bin.purging': 'Deleting…',
       'bin.orphans': 'Orphan subagent sessions',
       'bin.orphanMove': 'Move to the bin',
       'bin.orphanMoving': 'Moving…',
@@ -136,6 +140,10 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-state-error-primary, #e5484d);
 }
 .session-purge-item:hover, .session-purge-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover-danger, rgba(229,72,77,.14)); outline: none; }
+/* The safe half of a two-button row (Restore beside "Delete now"): same
+   geometry, ordinary text colour, and a neutral hover instead of the danger wash. */
+.session-purge-safe { color: var(--dsw-alias-label-primary, #f5f5f5); }
+.session-purge-safe:hover, .session-purge-safe:focus-visible { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.14)); }
 .session-purge-item-icon { display: inline-flex; flex: none; width: 14px; height: 14px; align-items: center; justify-content: center; }
 .session-purge-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -555,22 +563,28 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener('keydown', onKeyDown)
       }, [open])
       if (open === false) return null
+      /** Whether one row's own button is the call in flight. */
+      const busyOn = (action, id) => state.busy !== null && state.busy.action === action && state.busy.id === id
       const run = (endpoint, sessionId) => {
-        setState((previous) => ({ ...previous, busy: sessionId ?? '*' }))
+        setState((previous) => ({ ...previous, busy: { action: endpoint, id: sessionId ?? '*' } }))
         // `restore` and `move` both act on exactly one session; `empty` is the
-        // whole bin. `move` is the same call the sidebar dialog makes, so an
-        // orphan travels the identical path: into the bin now, deleted for real
-        // on the next start, restorable until then.
+        // whole bin unless it is handed `sessionIds`, which is how one row's
+        // "delete now" skips the wait without touching the rest. `move` is the
+        // same call the sidebar dialog makes, so an orphan travels the identical
+        // path: into the bin now, deleted for real on the next start, restorable
+        // until then.
         const call = endpoint === 'restore' ? restoreBin({ sessionId })
           : endpoint === 'move' ? moveBin({ sessionId })
-            : emptyBin({})
+            : endpoint === 'purge' ? emptyBin({ sessionIds: [sessionId] })
+              : emptyBin({})
         call.then((result) => {
-          // Emptying the bin deletes for real right now, so this answer carries
-          // the only ids the page will ever see for those sessions.
-          if (endpoint === 'empty' && result?.ok === true) {
+          // Deleting for real right now — one row or the whole bin — is what
+          // takes these ids off the disk, so this answer carries the only ids the
+          // page will ever see for them.
+          if ((endpoint === 'empty' || endpoint === 'purge') && result?.ok === true) {
             const purged = Array.isArray(result.value?.purged) ? result.value.purged : []
             const removed = clearPageKeys(purged)
-            console.info(`[session-purge] page keys: removed ${removed} key(s) after emptying the bin`)
+            console.info(`[session-purge] page keys: removed ${removed} key(s) after deleting ${purged.length} session(s) for real`)
           }
           refresh()
           binStore.set(binStore.get())
@@ -598,14 +612,25 @@ window.__ModuleLoader__.load({
         style: { cursor: 'default', color: 'inherit' },
       }, [
         labelOf(entry),
+        // "Delete now" sits to the LEFT of Restore on purpose: the safe action
+        // keeps the slot the pointer was already resting on when the panel
+        // opened, and the irreversible one is a deliberate move away from it.
         h('button', {
-          key: 'restore',
+          key: 'purge',
           type: 'button',
           className: 'session-purge-item',
           style: buttonStyle,
           disabled: state.busy !== null,
+          onClick: () => run('purge', entry.id),
+        }, busyOn('purge', entry.id) ? t('bin.purging') : t('bin.purge')),
+        h('button', {
+          key: 'restore',
+          type: 'button',
+          className: 'session-purge-item session-purge-safe',
+          style: buttonStyle,
+          disabled: state.busy !== null,
           onClick: () => run('restore', entry.id),
-        }, state.busy === entry.id ? t('bin.restoring') : t('bin.restore')),
+        }, busyOn('restore', entry.id) ? t('bin.restoring') : t('bin.restore')),
       ]))
       // Hidden subagent sessions whose parent is no longer in the session list:
       // they have no sidebar row and no dialog that names them, so this section
@@ -624,7 +649,7 @@ window.__ModuleLoader__.load({
           style: buttonStyle,
           disabled: state.busy !== null,
           onClick: () => run('move', entry.id),
-        }, state.busy === entry.id ? t('bin.orphanMoving') : t('bin.orphanMove')),
+        }, busyOn('move', entry.id) ? t('bin.orphanMoving') : t('bin.orphanMove')),
       ]))
       return h('div', { className: 'session-purge-modal', role: 'dialog', 'aria-modal': 'true' }, [
         h('div', {
@@ -665,7 +690,7 @@ window.__ModuleLoader__.load({
               style: buttonStyle,
               disabled: state.busy !== null || state.pending.length === 0,
               onClick: () => run('empty'),
-            }, state.busy === '*' ? t('bin.clearing') : t('bin.clear')),
+            }, state.busy?.action === 'empty' ? t('bin.clearing') : t('bin.clear')),
             h('button', {
               key: 'close',
               type: 'button',

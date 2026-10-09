@@ -696,6 +696,49 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
       && JSON.stringify(client.rowLabel({ id: UNTITLED, title: '   ' })) === JSON.stringify({ primary: UNTITLED, secondary: null }),
     JSON.stringify([client.rowLabel({ id: UNTITLED, title: '' }), client.rowLabel({ id: UNTITLED }), client.rowLabel({ id: UNTITLED, title: '   ' })]))
 }
+// ------------------------------------ empty narrowed to an explicit id subset
+{
+  await resetBin()
+  await seed(OTHER)
+  await seed(FORK)
+  // The registry is only here so the pass has the same services the real one
+  // has; both sessions belong to no workspace, which is the bin's normal state.
+  const registry = {
+    list: () => [],
+    archivedSessionIds: [],
+    pinnedSessionIds: [],
+    unarchiveSession: async () => {},
+    unpinSession: async () => {},
+  }
+  const subsetRun = makeCtx({ snapshots, registry })
+  apply(subsetRun.ctx)
+  const route = subsetRun.route()
+  const binnedDir = join(SANDBOX, 'session-purge-trash', PROJECT)
+
+  await call(route, 'move', { sessionId: OTHER })
+  await call(route, 'move', { sessionId: FORK })
+  check('two sessions sit in the bin before the narrowed delete',
+    await stat(join(binnedDir, OTHER)).then(() => true, () => false)
+      && await stat(join(binnedDir, FORK)).then(() => true, () => false))
+
+  const narrowed = await call(route, 'empty', { sessionIds: [OTHER] })
+  check('empty with sessionIds purges exactly the named session',
+    narrowed.body.ok === true
+      && JSON.stringify(narrowed.body.value?.purged) === JSON.stringify([OTHER])
+      && narrowed.body.value?.errors?.length === 0,
+    JSON.stringify(narrowed.body.value))
+  check('the named session is really gone from the bin',
+    await stat(join(binnedDir, OTHER)).then(() => false, () => true))
+  check('the session the caller did not name stays in the bin',
+    await stat(join(binnedDir, FORK)).then(() => true, () => false))
+
+  const remainder = await call(route, 'empty', {})
+  check('empty without sessionIds still takes everything that is left',
+    JSON.stringify(remainder.body.value?.purged) === JSON.stringify([FORK]),
+    JSON.stringify(remainder.body.value))
+  await resetBin()
+}
+
 // -------------------------------------------------------------------- verdict
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)

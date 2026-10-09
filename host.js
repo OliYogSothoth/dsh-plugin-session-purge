@@ -211,7 +211,16 @@ class SessionPurger {
         return ok({ sessionId: entry.id, restoredTo })
       }
       if (endpoint === 'empty') {
-        const pending = await this.scanBin()
+        // The whole bin by default; an explicit `sessionIds` narrows it to those
+        // rows, so one entry can be deleted for real without emptying the rest.
+        // Absent, empty, or unknown ids all degrade to "nothing extra to do":
+        // the pass is driven by what the bin actually holds, never by the list.
+        const selected = Array.isArray(request.sessionIds)
+          ? new Set(request.sessionIds.filter((id) => typeof id === 'string'))
+          : null
+        const pending = (await this.scanBin()).filter(
+          (entry) => selected === null || selected.has(entry.id),
+        )
         const errors = []
         for (const entry of pending) {
           errors.push(...await this.purgeEntry(entry))
