@@ -13,6 +13,26 @@
 
 只有一个入口、**没有 agent 工具**：模型不能自己删会话，只有你手点才会发生。
 
+## 界面
+
+**会话「…」菜单里点「放入回收站」** —— 确认框列出将要移出的目录，以及会连带移出的子代理会话数（可取消勾选）：
+
+![放入回收站确认框](assets/screenshot-confirm-dialog.png)
+
+**侧栏底部的「回收站」入口** —— 没有待删项时 / 有待删项时（后者带数量）：
+
+![回收站入口](assets/screenshot-bin-entry.png)
+
+![回收站入口（带待删数量）](assets/screenshot-bin-entry-count.png)
+
+**回收站面板** —— 每行可「恢复」或「立刻删除」，底部可「清空回收站」：
+
+![回收站面板](assets/screenshot-bin-panel.png)
+
+**回收站为空时**：
+
+![回收站为空](assets/screenshot-bin-panel-empty.png)
+
 ## 删什么
 
 被真正删除时，按会话分别清掉三处：

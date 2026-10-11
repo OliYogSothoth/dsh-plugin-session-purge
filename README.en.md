@@ -13,6 +13,26 @@ English | [中文](README.md)
 
 There is exactly one kind of entry and **no agent tool**: the model cannot delete a session by itself — it only happens when you click.
 
+## Screenshots
+
+**"Move to recycle bin" in the session "…" menu** — the dialog lists the directories that will be moved out, plus how many subagent sessions come along (untick to leave those behind):
+
+![Move to recycle bin dialog](assets/screenshot-confirm-dialog.png)
+
+**The "Recycle bin" entry at the sidebar footer** — with nothing pending / with a pending count:
+
+![Recycle bin entry](assets/screenshot-bin-entry.png)
+
+![Recycle bin entry with a pending count](assets/screenshot-bin-entry-count.png)
+
+**The recycle-bin panel** — every row can be Restored or deleted for good right away, and the footer can empty the whole bin:
+
+![Recycle bin panel](assets/screenshot-bin-panel.png)
+
+**When the bin is empty**:
+
+![Empty recycle bin](assets/screenshot-bin-panel-empty.png)
+
 ## What gets deleted
 
 When a session is actually deleted, three places go with it:
