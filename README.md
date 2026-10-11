@@ -89,13 +89,15 @@ https://github.com/OliYogSothoth/dsh-plugin-session-purge
 
 装完**重启 Harness**。这条路会把包**复制一份**进 profile ⇒ **你不需要保留任何本地目录**。
 
-> 目前只在 GitHub 上（还没有 npm 包名）。
+> **也发在 npm 上了**：包名 `dsh-plugin-session-purge`（[npm 页面](https://www.npmjs.com/package/dsh-plugin-session-purge)）。把上面那行换成**这个包名**粘进去，效果一样 —— 不想依赖 npm 就用仓库地址，两条都行。
 
 > **给 agent 的等价写法**（你让模型替你装时才用；`plugin_manager` 是 DSH 暴露给模型的工具，它和界面按钮走**同一套底层服务**）：
 > ```
 > plugin_manager → install_bundle → target: github:OliYogSothoth/dsh-plugin-session-purge
 > ```
 > 或者命令行：`dsh plugin --profile web add github:OliYogSothoth/dsh-plugin-session-purge`
+>
+> 走 npm 的话：`plugin_manager → install_bundle → target: dsh-plugin-session-purge`，或 `dsh plugin --profile web add dsh-plugin-session-purge`
 
 ### 本地目录安装（自己改源码时才用）
 

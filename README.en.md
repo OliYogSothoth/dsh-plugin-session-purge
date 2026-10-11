@@ -89,13 +89,15 @@ https://github.com/OliYogSothoth/dsh-plugin-session-purge
 
 Then **restart Harness**. This route **copies** the package into your profile, so **you do not need to keep any local directory**.
 
-> It lives on GitHub only for now (there is no npm package name yet).
+> **It is on npm too**: the package name is `dsh-plugin-session-purge` ([npm page](https://www.npmjs.com/package/dsh-plugin-session-purge)). Paste **that name** instead of the URL above and it works the same — use the repo URL if you would rather not depend on npm.
 
 > **The agent's equivalent** (only when you have the model do it for you; `plugin_manager` is the tool DSH exposes to the model, and it goes through the **same underlying service** the UI buttons use):
 > ```
 > plugin_manager → install_bundle → target: github:OliYogSothoth/dsh-plugin-session-purge
 > ```
 > Or on the command line: `dsh plugin --profile web add github:OliYogSothoth/dsh-plugin-session-purge`
+>
+> Via npm: `plugin_manager → install_bundle → target: dsh-plugin-session-purge`, or `dsh plugin --profile web add dsh-plugin-session-purge`
 
 ### Install from a local directory (only when you edit the source)
 
