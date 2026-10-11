@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Delete sessions for good",
-    "description": "Adds \"Move to recycle bin\" to a session's \"…\" menu: nothing is deleted and it can be restored; the next DSH start wipes its log, projection cache, spill files and workspace accounting. A recycle-bin panel at the sidebar footer restores or empties it."
+    "description": "Adds \"Move to recycle bin\" to a session's \"…\" menu: nothing is deleted and it can be restored; the next DSH start wipes its log, projection cache, spill files and workspace accounting. A recycle-bin panel at the sidebar footer restores an entry, deletes one for good right away, or empties the whole bin."
   }
 }
