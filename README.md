@@ -29,6 +29,10 @@
 
 ![回收站面板](assets/screenshot-bin-panel.png)
 
+**子会话折叠到父会话行下** —— 主会话行带「▸ N 个子会话」，**默认收起**、点开展开；父会话不在回收站里的子会话仍单独成行：
+
+![子会话折叠到父会话行下](assets/screenshot-bin-fold.png)
+
 **回收站为空时**：
 
 ![回收站为空](assets/screenshot-bin-panel-empty.png)
