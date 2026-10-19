@@ -60,6 +60,8 @@ window.__ModuleLoader__.load({
       'bin.loading': '正在读取回收站…',
       'bin.empty': '回收站是空的。放入回收站的会话会在这里等着，直到下次启动 DSH 时被真正删除。',
       'bin.timing': '真正的删除发生在下次启动 DSH 时；在那之前，每一条都可以恢复。「立刻删除」跳过等待、现在就删；「清空回收站」一次删掉回收站里的全部，同样立刻生效、不可恢复。',
+      'bin.showChildren': '▸ {count} 个子会话',
+      'bin.hideChildren': '▾ 收起子会话',
       'bin.restore': '恢复',
       'bin.restoring': '正在恢复…',
       'bin.purge': '立刻删除',
@@ -101,6 +103,8 @@ window.__ModuleLoader__.load({
       'bin.loading': 'Reading the recycle bin…',
       'bin.empty': 'The recycle bin is empty. Sessions you move here wait until DSH starts again, which is when they are deleted for real.',
       'bin.timing': 'The real deletion happens on the next DSH start; until then every entry can be restored. "Delete now" skips the wait for one entry; "Empty the bin" does the same for everything in it — neither can be undone.',
+      'bin.showChildren': '▸ {count} subagent session(s)',
+      'bin.hideChildren': '▾ Hide subagents',
       'bin.restore': 'Restore',
       'bin.restoring': 'Restoring…',
       'bin.purge': 'Delete now',
@@ -497,6 +501,51 @@ window.__ModuleLoader__.load({
       return title === '' ? { primary: id, secondary: null } : { primary: title, secondary: id }
     }
 
+    /**
+     * Split the bin's flat directory listing into the rows the panel draws.
+     *
+     * The bin is a directory tree, so `list` returns one entry per directory —
+     * and a hidden subagent travels into the bin as its own directory. Folding
+     * those under the parent they came in with keeps the panel counting the
+     * sessions a person thinks about rather than directories on disk: one parent
+     * that owns ten subagents is one row with a "10 subagents" toggle.
+     *
+     * A subagent whose parent is not in the bin — the parent was restored, or the
+     * child was binned on its own — has nothing to fold into, so it stays a
+     * top-level row. Nothing is dropped and nothing is listed twice.
+     *
+     * Pure, and exported next to `apply`/`rowLabel` so the fold is assertable
+     * without a browser.
+     *
+     * @param pending - the Host's `list` entries: `{ id, origin, parentSession }`.
+     * @returns `{ topLevel, childrenOf }`; `childrenOf` maps a parent id to its
+     *   subagent rows, in the order the Host sent them.
+     */
+    function groupBinEntries(pending) {
+      const entries = Array.isArray(pending) ? pending : []
+      const byId = new Map()
+      for (const entry of entries) {
+        if (typeof entry?.id === 'string') byId.set(entry.id, entry)
+      }
+      const childrenOf = new Map()
+      const topLevel = []
+      for (const entry of entries) {
+        if (typeof entry?.id !== 'string') continue
+        const parentId = entry.origin === 'subagent' && typeof entry.parentSession === 'string'
+          ? entry.parentSession
+          : ''
+        const parent = parentId === '' ? undefined : byId.get(parentId)
+        if (parent === undefined || parent.id === entry.id) {
+          topLevel.push(entry)
+          continue
+        }
+        const bucket = childrenOf.get(parent.id)
+        if (bucket === undefined) childrenOf.set(parent.id, [entry])
+        else bucket.push(entry)
+      }
+      return { topLevel, childrenOf }
+    }
+
     /** Sidebar-foot action: the way into the recycle bin. */
     function RecycleBinAction({ t }) {
       const open = useBinOpen()
@@ -606,15 +655,21 @@ window.__ModuleLoader__.load({
             }, shown.secondary),
           ])
       }
-      const rows = state.pending.map((entry) => h('div', {
-        key: entry.id,
-        className: 'session-purge-item',
-        style: { cursor: 'default', color: 'inherit' },
-      }, [
-        labelOf(entry),
-        // "Delete now" sits to the LEFT of Restore on purpose: the safe action
-        // keeps the slot the pointer was already resting on when the panel
-        // opened, and the irreversible one is a deliberate move away from it.
+      // Fold the bin's subagent directories under the parent they came in with.
+      // The open/closed state lives here; a fresh `list` keeps the same ids, so a
+      // group the reader opened stays open across a purge or restore inside it.
+      const [expandedGroups, setExpandedGroups] = React.useState(() => new Set())
+      const toggleGroup = (id) => setExpandedGroups((previous) => {
+        const next = new Set(previous)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+      const { topLevel, childrenOf } = groupBinEntries(state.pending)
+      // "Delete now" sits to the LEFT of Restore on purpose: the safe action keeps
+      // the slot the pointer was already resting on when the panel opened, and the
+      // irreversible one is a deliberate move away from it.
+      const actionButtons = (entry) => [
         h('button', {
           key: 'purge',
           type: 'button',
@@ -631,7 +686,31 @@ window.__ModuleLoader__.load({
           disabled: state.busy !== null,
           onClick: () => run('restore', entry.id),
         }, busyOn('restore', entry.id) ? t('bin.restoring') : t('bin.restore')),
-      ]))
+      ]
+      const rowFor = (entry, depth) => {
+        const kids = childrenOf.get(entry.id) ?? []
+        const open = expandedGroups.has(entry.id)
+        return h('div', { key: entry.id, style: { display: 'flex', flexDirection: 'column' } }, [
+          h('div', {
+            key: 'row',
+            className: 'session-purge-item',
+            style: { cursor: 'default', color: 'inherit', paddingLeft: depth === 0 ? undefined : '24px' },
+          }, [
+            labelOf(entry),
+            kids.length === 0 ? null : h('button', {
+              key: 'toggle',
+              type: 'button',
+              className: 'session-purge-item session-purge-safe',
+              style: buttonStyle,
+              'aria-expanded': open,
+              onClick: () => toggleGroup(entry.id),
+            }, open ? t('bin.hideChildren') : t('bin.showChildren', { count: kids.length })),
+            ...actionButtons(entry),
+          ]),
+          kids.length === 0 || open === false ? null : kids.map((kid) => rowFor(kid, depth + 1)),
+        ])
+      }
+      const rows = topLevel.map((entry) => rowFor(entry, 0))
       // Hidden subagent sessions whose parent is no longer in the session list:
       // they have no sidebar row and no dialog that names them, so this section
       // is the only way to hand one to the same two-step delete. It renders only
@@ -656,6 +735,11 @@ window.__ModuleLoader__.load({
           key: 'card',
           style: {
             pointerEvents: 'auto', maxWidth: '560px', margin: '12vh auto 0', padding: '16px 18px',
+            boxSizing: 'border-box', display: 'flex', flexDirection: 'column',
+            // Cap the panel so a long recycle bin cannot push it past the viewport:
+            // 100vh minus the 12vh top offset and a 60px reserve for the overlay's
+            // own padding. The list below scrolls; title and footer stay put.
+            maxHeight: 'calc(88vh - 60px)', overflow: 'hidden',
             borderRadius: '12px', background: 'var(--dsw-alias-bg-elevated, #1f1f1f)',
             border: '0.5px solid var(--dsw-alias-border-l2, rgba(127,127,127,.3))',
             color: 'var(--dsw-alias-fg-default, #e8e8e8)', fontSize: '13px', lineHeight: '20px',
@@ -668,19 +752,27 @@ window.__ModuleLoader__.load({
           state.loaded === true && state.pending.length === 0
             ? h('p', { key: 'empty', className: 'session-purge-muted' }, t('bin.empty'))
             : null,
-          h('div', { key: 'rows' }, rows),
-          state.orphans.length === 0 ? null : h('div', {
-            key: 'orphans',
+          h('div', {
+            key: 'list',
             style: {
-              marginTop: '14px', paddingTop: '12px',
-              borderTop: '0.5px solid var(--dsw-alias-border-l2, rgba(127,127,127,.3))',
+              flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain',
+              paddingRight: '6px',
             },
           }, [
-            h('h3', {
-              key: 'heading',
-              style: { margin: '0 0 8px', fontSize: '13px', fontWeight: '600' },
-            }, `${t('bin.orphans')} (${state.orphans.length})`),
-            h('div', { key: 'rows' }, orphanRows),
+            h('div', { key: 'rows' }, rows),
+            state.orphans.length === 0 ? null : h('div', {
+              key: 'orphans',
+              style: {
+                marginTop: '14px', paddingTop: '12px',
+                borderTop: '0.5px solid var(--dsw-alias-border-l2, rgba(127,127,127,.3))',
+              },
+            }, [
+              h('h3', {
+                key: 'heading',
+                style: { margin: '0 0 8px', fontSize: '13px', fontWeight: '600' },
+              }, `${t('bin.orphans')} (${state.orphans.length})`),
+              h('div', { key: 'rows' }, orphanRows),
+            ]),
           ]),
           h('div', { key: 'actions', style: { display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '14px' } }, [
             h('button', {
@@ -809,6 +901,6 @@ window.__ModuleLoader__.load({
       }, SessionPurgerOverlay))
     }
 
-    return { inject, apply, rowLabel }
+    return { inject, apply, rowLabel, groupBinEntries }
   },
 })

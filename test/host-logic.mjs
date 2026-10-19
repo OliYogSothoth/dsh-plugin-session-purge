@@ -696,6 +696,65 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
       && JSON.stringify(client.rowLabel({ id: UNTITLED, title: '   ' })) === JSON.stringify({ primary: UNTITLED, secondary: null }),
     JSON.stringify([client.rowLabel({ id: UNTITLED, title: '' }), client.rowLabel({ id: UNTITLED }), client.rowLabel({ id: UNTITLED, title: '   ' })]))
 }
+// ------------------------------- subagent rows fold under their parent
+{
+  // A hidden subagent travels into the bin as its own directory, so `list`
+  // returns the parent and each child as separate entries. The panel folds them
+  // into one parent row with a toggle instead of one row per directory. A child
+  // whose parent is not in the bin has nothing to fold into, so it stays
+  // top-level — nothing is dropped and nothing is listed twice.
+  const P = 'session-ccccccc1-cccc-4ccc-8ccc-ccccccccccc1'
+  const K1 = 'session-ccccccc2-cccc-4ccc-8ccc-ccccccccccc2'
+  const K2 = 'session-ccccccc3-cccc-4ccc-8ccc-ccccccccccc3'
+  const LONE = 'session-ccccccc4-cccc-4ccc-8ccc-ccccccccccc4'
+  const LONE_PARENT = 'session-ddddddd1-dddd-4ddd-8ddd-ddddddddddd1'
+  const catalog = [
+    header(P),
+    header(K1, { parentSession: P, origin: 'subagent' }),
+    header(K2, { parentSession: P, origin: 'subagent' }),
+    header(LONE, { parentSession: LONE_PARENT, origin: 'subagent' }),
+  ]
+  const registry = { list: () => [], archivedSessionIds: [], pinnedSessionIds: [] }
+  const { ctx, route } = makeCtx({ snapshots: catalog, registry, cache: { get: () => undefined } })
+  apply(ctx)
+  await resetBin()
+  const withHead = (id, extra) => seed(id, { log: { name: 'session.v4.jsonl', bytes: logLine(header(id, extra)) } })
+  await withHead(P)
+  await withHead(K1, { parentSession: P, origin: 'subagent' })
+  await withHead(K2, { parentSession: P, origin: 'subagent' })
+  await withHead(LONE, { parentSession: LONE_PARENT, origin: 'subagent' })
+  await call(route(), 'move', { sessionId: P, includeSubagents: true })
+  await call(route(), 'move', { sessionId: LONE })
+  const listed = await call(route(), 'list', {})
+  const pending = listed.body.value?.pending ?? []
+  const byId = new Map(pending.map((entry) => [entry.id, entry]))
+  check('a binned subagent reports that it is one, and the parent it came in with',
+    byId.get(K1)?.origin === 'subagent' && byId.get(K1)?.parentSession === P,
+    JSON.stringify(byId.get(K1)))
+  check('a binned session that is not a subagent carries no subagent markers',
+    byId.get(P)?.origin === '' && byId.get(P)?.parentSession === '',
+    JSON.stringify(byId.get(P)))
+
+  let loaded
+  globalThis.window = { __ModuleLoader__: { load: (definition) => { loaded = definition } } }
+  await import(pathToFileURL(CLIENT).href + '?fold=1')
+  const client = loaded.factory((name) => (name === 'react' ? { createElement: () => ({}) } : undefined))
+  const { topLevel, childrenOf } = client.groupBinEntries(pending)
+  const topIds = topLevel.map((entry) => entry.id).sort()
+  check('the client folds binned subagents under the parent they came in with',
+    topIds.join() === [P, LONE].sort().join()
+      && (childrenOf.get(P) ?? []).map((entry) => entry.id).sort().join() === [K1, K2].sort().join(),
+    JSON.stringify({ topIds, kids: (childrenOf.get(P) ?? []).map((entry) => entry.id) }))
+  check('the client keeps a subagent whose parent is not in the bin as a top-level row',
+    topIds.includes(LONE) && !topIds.includes(K1) && !topIds.includes(K2), JSON.stringify(topIds))
+  check('the fold drops nothing and lists nothing twice',
+    topLevel.length + [...childrenOf.values()].reduce((n, row) => n + row.length, 0) === pending.length,
+    JSON.stringify({
+      total: pending.length,
+      top: topLevel.length,
+      folded: [...childrenOf.values()].reduce((n, row) => n + row.length, 0),
+    }))
+}
 // ------------------------------------ empty narrowed to an explicit id subset
 {
   await resetBin()

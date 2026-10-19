@@ -309,7 +309,18 @@ class SessionPurger {
     const titled = []
     for (const entry of pending) {
       const header = await readSessionHeader(join(this.trashRoot(), entry.projectDir, entry.id))
-      titled.push({ ...entry, title: header === undefined ? '' : this.cachedTitle(header) })
+      titled.push({
+        ...entry,
+        title: header === undefined ? '' : this.cachedTitle(header),
+        // A hidden subagent travels into the bin as its own directory. The panel
+        // folds those under the row of the parent they came in with, so the
+        // listing counts sessions instead of directories. `origin` is only set
+        // when the head says "subagent"; everything else stays a top-level row.
+        origin: header !== undefined && header.origin === 'subagent' ? 'subagent' : '',
+        parentSession: header !== undefined && typeof header.parentSession === 'string'
+          ? header.parentSession
+          : '',
+      })
     }
     return titled
   }
