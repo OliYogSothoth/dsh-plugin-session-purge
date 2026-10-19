@@ -755,6 +755,24 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
       folded: [...childrenOf.values()].reduce((n, row) => n + row.length, 0),
     }))
 }
+// --------------------------- the bin overlay keeps its hooks above the return
+{
+  // React needs the same hooks in the same order on every render, and the bin
+  // overlay returns null while the panel is closed. A hook placed *after* that
+  // early return changes the hook count the moment the panel opens: React throws
+  // and the footer button looks dead (exactly the 1.3.1 regression). This harness
+  // has no DOM, so the guard is static — a text assertion over client.js, not a
+  // render: no `React.use*` may appear after the overlay's first `return null`.
+  const source = await readFile(CLIENT, 'utf8')
+  const start = source.indexOf('function RecycleBinOverlay')
+  const end = source.indexOf('return { inject, apply', start)
+  const body = start === -1 || end === -1 ? '' : source.slice(start, end)
+  const firstReturnNull = body.indexOf('return null')
+  const hookAfterReturn = firstReturnNull === -1 ? -1 : body.indexOf('React.use', firstReturnNull)
+  check('the bin overlay keeps every hook above its early return (hook count must not change when the panel opens)',
+    body.length > 0 && firstReturnNull !== -1 && hookAfterReturn === -1,
+    `start=${start} end=${end} firstReturnNull=${firstReturnNull} hookAfterReturn=${hookAfterReturn}`)
+}
 // ------------------------------------ empty narrowed to an explicit id subset
 {
   await resetBin()

@@ -594,6 +594,12 @@ window.__ModuleLoader__.load({
     function RecycleBinOverlay({ t }) {
       const open = useBinOpen()
       const [state, setState] = React.useState({ pending: [], orphans: [], error: null, busy: null, loaded: false })
+      // Hooks stay above the `open === false` early return below: React requires
+      // the same hooks in the same order on every render, and this component
+      // returns null while the panel is closed. A hook placed after that return
+      // changes the count the moment the panel opens, which throws and leaves the
+      // footer button looking dead (regression shipped in 1.3.1, fixed in 1.3.2).
+      const [expandedGroups, setExpandedGroups] = React.useState(() => new Set())
       const refresh = React.useCallback(() => {
         listBin({}).then((result) => {
           if (result.ok === true) setState({ pending: result.value?.pending ?? [], orphans: result.value?.orphans ?? [], error: null, busy: null, loaded: true })
@@ -658,7 +664,6 @@ window.__ModuleLoader__.load({
       // Fold the bin's subagent directories under the parent they came in with.
       // The open/closed state lives here; a fresh `list` keeps the same ids, so a
       // group the reader opened stays open across a purge or restore inside it.
-      const [expandedGroups, setExpandedGroups] = React.useState(() => new Set())
       const toggleGroup = (id) => setExpandedGroups((previous) => {
         const next = new Set(previous)
         if (next.has(id)) next.delete(id)
