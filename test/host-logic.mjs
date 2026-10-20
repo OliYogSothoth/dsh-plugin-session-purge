@@ -773,6 +773,34 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
     body.length > 0 && firstReturnNull !== -1 && hookAfterReturn === -1,
     `start=${start} end=${end} firstReturnNull=${firstReturnNull} hookAfterReturn=${hookAfterReturn}`)
 }
+// -------------------- client.js only asks for theme tokens DSH really defines
+{
+  // The bin panel once asked for `--dsw-alias-bg-elevated` and
+  // `--dsw-alias-fg-default`. DSH defines neither, and a missing custom property
+  // makes var() use its literal fallback — which was dark, so the panel stayed
+  // dark in the light theme. This is the vetted allowlist: each token below was
+  // confirmed against the shipped app by scanning it for `--dsw-alias-*`
+  // (2026-10-20: 120 distinct names; every one is defined per theme via
+  // `body[data-ds-dark-theme]`). Add a token here only after checking it there.
+  const vetted = new Set([
+    '--dsw-alias-bg-layer-2',
+    '--dsw-alias-bg-mask-1',
+    '--dsw-alias-bg-overlay',
+    '--dsw-alias-border-l1',
+    '--dsw-alias-border-l2',
+    '--dsw-alias-border-l3',
+    '--dsw-alias-interactive-bg-hover',
+    '--dsw-alias-interactive-bg-hover-danger',
+    '--dsw-alias-label-primary',
+    '--dsw-alias-label-secondary',
+    '--dsw-alias-state-error-primary',
+  ])
+  const clientSource = await readFile(CLIENT, 'utf8')
+  const asked = new Set([...clientSource.matchAll(/--dsw-alias-[a-z0-9-]+/g)].map((match) => match[0]))
+  const unknown = [...asked].filter((token) => !vetted.has(token))
+  check('every DSH theme token client.js asks for exists in the app (a typo would silently fall back to a literal)',
+    unknown.length === 0, `unknown=${JSON.stringify(unknown)}`)
+}
 // ------------------------------------ empty narrowed to an explicit id subset
 {
   await resetBin()

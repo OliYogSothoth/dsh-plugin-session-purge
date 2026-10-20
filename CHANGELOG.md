@@ -7,6 +7,22 @@
 **版本边界不是回忆出来的**：每个版本的起点＝该提交里 `package.json` 的 `version` 值。
 复核命令：`git log -p --follow -- package.json`。两次 bump 之间提交的修复，按 version 值归入当前版本。
 
+## [1.3.3] - 2026-10-20
+
+### Fixed
+
+- **浅色主题下回收站面板仍是深色**：面板的底色与文字色用了两个 DSH **并不存在**的主题 token
+  （`--dsw-alias-bg-elevated` / `--dsw-alias-fg-default`）⇒ `var()` 回退到写死的**深色**字面量，
+  于是与主题无关、永远是黑面板（黑底 + 灰字）。改用 DSH 真实存在的
+  `--dsw-alias-bg-layer-2`（与「放入回收站」确认框同一个 surface 层）与
+  `--dsw-alias-label-primary`（正文色）⇒ 浅色/深色两套主题都跟着走。
+
+### Added
+
+- **台架新增「主题 token 白名单」守卫**：扫描 `client.js` 里用到的每个 `--dsw-alias-*`，
+  只要不在**逐个对 DSH 本体核实过**的白名单里就判红 —— 防止再出现"token 名写错、悄悄回退成
+  硬编码颜色"这种**只在某一个主题下才暴露**的缺陷（本次实测：插件用 13 个 token，其中 2 个不存在）。
+
 ## [1.3.2] - 2026-10-19
 
 ### Fixed

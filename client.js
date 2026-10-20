@@ -745,9 +745,14 @@ window.__ModuleLoader__.load({
             // 100vh minus the 12vh top offset and a 60px reserve for the overlay's
             // own padding. The list below scrolls; title and footer stay put.
             maxHeight: 'calc(88vh - 60px)', overflow: 'hidden',
-            borderRadius: '12px', background: 'var(--dsw-alias-bg-elevated, #1f1f1f)',
+            // Theme tokens must be ones DSH actually defines: a name it does not
+            // define makes var() fall back to the literal, and these literals are
+            // dark — which is how the panel once stayed dark in the light theme
+            // (bg-elevated / fg-default do not exist in DSH). bg-layer-2 is the
+            // dialog's own surface; label-primary is the app's body text colour.
+            borderRadius: '12px', background: 'var(--dsw-alias-bg-layer-2, #1f1f1f)',
             border: '0.5px solid var(--dsw-alias-border-l2, rgba(127,127,127,.3))',
-            color: 'var(--dsw-alias-fg-default, #e8e8e8)', fontSize: '13px', lineHeight: '20px',
+            color: 'var(--dsw-alias-label-primary, #e8e8e8)', fontSize: '13px', lineHeight: '20px',
           },
         }, [
           h('h2', { key: 'title', style: { margin: '0 0 8px', fontSize: '15px' } }, t('bin.title')),
