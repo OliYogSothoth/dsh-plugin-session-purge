@@ -79,6 +79,8 @@ The storage root comes from `sessionPersistence.root` (the one the JSONL backend
 
 The bin's listing has **exactly one source: the directories themselves** (the session id is the directory name and the original project directory is the level above), so there is no manifest file and no side-car metadata. Restore = move the directory back; `cwd` is read back from the session's own log header, and the session returns to its original workspace.
 
+**Known limitation after a restore (measured)**: a restore only moves the files back — DSH builds its session runtime and page state when it starts, so **restart DSH once** after restoring; only then does the session show its history and accept messages. **Do not type into a restored session before that restart**: it opens, but the message is not saved.
+
 **Location**: `<DSH_HOME>\session-purge-trash\<project directory>\<session id>\` (`DSH_HOME` defaults to `~/.dsh`).
 
 **Empty the recycle bin before uninstalling** (the panel's "Empty recycle bin" deletes for good right away). Once uninstalled no code is running any more, and the bin can only be handled by hand: deleting a directory = deleting for good; moving a session directory back to `<DSH_HOME>\sessions\<the same project directory>\` = restoring it.
