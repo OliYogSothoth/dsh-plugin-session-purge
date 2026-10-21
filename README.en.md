@@ -29,7 +29,7 @@ There is exactly one kind of entry and **no agent tool**: the model cannot delet
 
 ![Recycle bin panel](assets/screenshot-bin-panel.png)
 
-**Subagent sessions fold under the parent row** — the parent row carries "N subagent sessions", collapsed by default and expanded on click; a subagent whose parent is not in the bin stays on its own row:
+**Subagent sessions fold under the parent row** — the parent row carries "N subagent sessions", collapsed by default and expanded on click; subagents whose **parent was deleted** group under one "⚠ Parent deleted · N subagent session(s)" row instead (also collapsed by default, nothing dropped):
 
 ![Subagent sessions folded under their parent row](assets/screenshot-bin-fold.png)
 

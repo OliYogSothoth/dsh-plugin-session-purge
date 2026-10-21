@@ -69,6 +69,7 @@ window.__ModuleLoader__.load({
       'bin.orphans': '孤儿子代理会话',
       'bin.orphanMove': '放入回收站',
       'bin.orphanMoving': '正在放入…',
+      'bin.deletedParent': '⚠ 父会话已删除 · {count} 个子会话',
       'bin.clear': '清空回收站',
       'bin.clearing': '正在清空…',
       'bin.close': '关闭',
@@ -112,6 +113,7 @@ window.__ModuleLoader__.load({
       'bin.orphans': 'Orphan subagent sessions',
       'bin.orphanMove': 'Move to the bin',
       'bin.orphanMoving': 'Moving…',
+      'bin.deletedParent': '⚠ Parent deleted · {count} subagent session(s)',
       'bin.clear': 'Empty the bin',
       'bin.clearing': 'Emptying…',
       'bin.close': 'Close',
@@ -528,22 +530,33 @@ window.__ModuleLoader__.load({
         if (typeof entry?.id === 'string') byId.set(entry.id, entry)
       }
       const childrenOf = new Map()
+      // Subagent rows whose parent is no longer in the bin: the parent was deleted
+      // for good, so there is no row to fold them under. They still group — under
+      // the parent id, rendered as a synthetic "the parent is gone" header — so
+      // deleting a parent does not turn its children into a flat wall of rows.
+      const orphanChildrenOf = new Map()
       const topLevel = []
       for (const entry of entries) {
         if (typeof entry?.id !== 'string') continue
         const parentId = entry.origin === 'subagent' && typeof entry.parentSession === 'string'
           ? entry.parentSession
           : ''
-        const parent = parentId === '' ? undefined : byId.get(parentId)
-        if (parent === undefined || parent.id === entry.id) {
+        if (parentId === '') {
           topLevel.push(entry)
           continue
         }
-        const bucket = childrenOf.get(parent.id)
-        if (bucket === undefined) childrenOf.set(parent.id, [entry])
-        else bucket.push(entry)
+        const parent = byId.get(parentId)
+        if (parent !== undefined && parent.id !== entry.id) {
+          const bucket = childrenOf.get(parentId)
+          if (bucket === undefined) childrenOf.set(parentId, [entry])
+          else bucket.push(entry)
+          continue
+        }
+        const orphanBucket = orphanChildrenOf.get(parentId)
+        if (orphanBucket === undefined) orphanChildrenOf.set(parentId, [entry])
+        else orphanBucket.push(entry)
       }
-      return { topLevel, childrenOf }
+      return { topLevel, childrenOf, orphanChildrenOf }
     }
 
     /** Sidebar-foot action: the way into the recycle bin. */
@@ -670,7 +683,7 @@ window.__ModuleLoader__.load({
         else next.add(id)
         return next
       })
-      const { topLevel, childrenOf } = groupBinEntries(state.pending)
+      const { topLevel, childrenOf, orphanChildrenOf } = groupBinEntries(state.pending)
       // "Delete now" sits to the LEFT of Restore on purpose: the safe action keeps
       // the slot the pointer was already resting on when the panel opened, and the
       // irreversible one is a deliberate move away from it.
@@ -716,6 +729,32 @@ window.__ModuleLoader__.load({
         ])
       }
       const rows = topLevel.map((entry) => rowFor(entry, 0))
+      // Subagent rows whose parent was deleted for good have no parent row to fold
+      // under. They used to fall back to flat top-level rows — so deleting a parent
+      // turned its children into a wall of rows. They still group: one synthetic
+      // header per missing parent id, collapsed by default, each child keeping its
+      // own Restore / Delete now.
+      const deletedParentGroups = [...orphanChildrenOf.entries()].map(([parentId, kids]) => {
+        const open = expandedGroups.has(parentId)
+        return h('div', { key: `deleted:${parentId}`, style: { display: 'flex', flexDirection: 'column' } }, [
+          h('div', {
+            key: 'head',
+            className: 'session-purge-item',
+            style: { cursor: 'default', color: 'inherit', opacity: 0.85 },
+          }, [
+            h('span', { key: 'label' }, t('bin.deletedParent', { count: kids.length })),
+            h('button', {
+              key: 'toggle',
+              type: 'button',
+              className: 'session-purge-item session-purge-safe',
+              style: buttonStyle,
+              'aria-expanded': open,
+              onClick: () => toggleGroup(parentId),
+            }, open ? t('bin.hideChildren') : t('bin.showChildren', { count: kids.length })),
+          ]),
+          open === false ? null : kids.map((kid) => rowFor(kid, 1)),
+        ])
+      })
       // Hidden subagent sessions whose parent is no longer in the session list:
       // they have no sidebar row and no dialog that names them, so this section
       // is the only way to hand one to the same two-step delete. It renders only
@@ -769,7 +808,7 @@ window.__ModuleLoader__.load({
               paddingRight: '6px',
             },
           }, [
-            h('div', { key: 'rows' }, rows),
+            h('div', { key: 'rows' }, [...rows, ...deletedParentGroups]),
             state.orphans.length === 0 ? null : h('div', {
               key: 'orphans',
               style: {

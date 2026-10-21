@@ -739,16 +739,20 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
   globalThis.window = { __ModuleLoader__: { load: (definition) => { loaded = definition } } }
   await import(pathToFileURL(CLIENT).href + '?fold=1')
   const client = loaded.factory((name) => (name === 'react' ? { createElement: () => ({}) } : undefined))
-  const { topLevel, childrenOf } = client.groupBinEntries(pending)
+  const { topLevel, childrenOf, orphanChildrenOf } = client.groupBinEntries(pending)
   const topIds = topLevel.map((entry) => entry.id).sort()
   check('the client folds binned subagents under the parent they came in with',
-    topIds.join() === [P, LONE].sort().join()
+    topIds.join() === [P].sort().join()
       && (childrenOf.get(P) ?? []).map((entry) => entry.id).sort().join() === [K1, K2].sort().join(),
     JSON.stringify({ topIds, kids: (childrenOf.get(P) ?? []).map((entry) => entry.id) }))
-  check('the client keeps a subagent whose parent is not in the bin as a top-level row',
-    topIds.includes(LONE) && !topIds.includes(K1) && !topIds.includes(K2), JSON.stringify(topIds))
+  check('a subagent whose parent is gone groups under a deleted-parent header instead of a flat row',
+    (orphanChildrenOf.get(LONE_PARENT) ?? []).map((entry) => entry.id).sort().join() === [LONE].sort().join()
+      && !topIds.includes(LONE),
+    JSON.stringify({ deletedParents: [...orphanChildrenOf.keys()], topIds }))
   check('the fold drops nothing and lists nothing twice',
-    topLevel.length + [...childrenOf.values()].reduce((n, row) => n + row.length, 0) === pending.length,
+    topLevel.length
+      + [...childrenOf.values()].reduce((n, row) => n + row.length, 0)
+      + [...orphanChildrenOf.values()].reduce((n, row) => n + row.length, 0) === pending.length,
     JSON.stringify({
       total: pending.length,
       top: topLevel.length,
