@@ -43,6 +43,7 @@ window.__ModuleLoader__.load({
       'dialog.directory': '{path}',
       'dialog.noDirectory': '（该会话没有落盘目录）',
       'dialog.kept': '共享的附件字节和派生搜索索引不在删除范围内（附件被其他会话共用）。回收站目录：<harness home>\\session-purge-trash。',
+      'dialog.forks': '⚠ 它还有 {count} 个分叉会话：分叉不会被一起移动，但移入回收站后它们会从侧栏隐藏（文件仍在磁盘上）—— 可在回收站面板的「孤儿会话」区里找到。',
       'dialog.cancel': '取消',
       'dialog.confirm': '放入回收站',
       'dialog.deleting': '正在移入回收站…',
@@ -66,9 +67,10 @@ window.__ModuleLoader__.load({
       'bin.restoring': '正在恢复…',
       'bin.purge': '立刻删除',
       'bin.purging': '正在删除…',
-      'bin.orphans': '孤儿子代理会话',
+      'bin.orphans': '孤儿会话（父会话已不在）',
       'bin.orphanMove': '放入回收站',
       'bin.orphanMoving': '正在放入…',
+      'bin.orphanFork': '分叉会话',
       'bin.deletedParent': '⚠ 父会话已删除 · {count} 个子会话',
       'bin.clear': '清空回收站',
       'bin.clearing': '正在清空…',
@@ -87,6 +89,7 @@ window.__ModuleLoader__.load({
       'dialog.directory': '{path}',
       'dialog.noDirectory': '(this session has no directory on disk)',
       'dialog.kept': 'Shared attachment bytes and the derived search index stay: attachments are shared with other sessions.',
+      'dialog.forks': '⚠ It has {count} fork(s): a fork is never moved with its parent, but after the move its sidebar row disappears (its files stay on disk) — find it under "Orphan sessions" in the recycle bin panel.',
       'dialog.cancel': 'Cancel',
       'dialog.confirm': 'Move to Recycle Bin',
       'dialog.deleting': 'Moving to the recycle bin…',
@@ -110,9 +113,10 @@ window.__ModuleLoader__.load({
       'bin.restoring': 'Restoring…',
       'bin.purge': 'Delete now',
       'bin.purging': 'Deleting…',
-      'bin.orphans': 'Orphan subagent sessions',
+      'bin.orphans': 'Orphan sessions (parent gone)',
       'bin.orphanMove': 'Move to the bin',
       'bin.orphanMoving': 'Moving…',
+      'bin.orphanFork': 'Fork',
       'bin.deletedParent': '⚠ Parent deleted · {count} subagent session(s)',
       'bin.clear': 'Empty the bin',
       'bin.clearing': 'Emptying…',
@@ -413,6 +417,11 @@ window.__ModuleLoader__.load({
               ? h('span', { className: 'session-purge-muted' }, t('dialog.noDirectory'))
               : directories.map((directory) => h('span', { className: 'session-purge-code', key: directory }, directory)),
             h('span', { className: 'session-purge-note' }, t('dialog.kept')),
+            // Forks are not moved, but their rows vanish from the sidebar while
+            // the parent is out of the root — say so before the reader confirms.
+            plan.forkCount > 0
+              ? h('span', { className: 'session-purge-note' }, t('dialog.forks', { count: plan.forkCount }))
+              : null,
           ),
           plan !== null && subagents > 0
             ? h(
@@ -765,6 +774,12 @@ window.__ModuleLoader__.load({
         style: { cursor: 'default', color: 'inherit' },
       }, [
         labelOf(entry),
+        // A fork is a visible session, not a hidden subagent: the badge is what
+        // tells the reader why it is listed here at all (its parent left the root).
+        entry.kind === 'fork' ? h('span', {
+          key: 'fork',
+          style: { marginLeft: '8px', fontSize: '11px', opacity: 0.85 },
+        }, t('bin.orphanFork')) : null,
         h('button', {
           key: 'move',
           type: 'button',

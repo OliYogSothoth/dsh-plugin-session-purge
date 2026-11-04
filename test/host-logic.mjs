@@ -555,6 +555,14 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
       && planned.body.value?.targets?.[0]?.id === ORPHAN_A
       && planned.body.value?.subagentCount === 0,
     JSON.stringify(planned.body.value?.targets?.map((t) => t.id)))
+  // A fork is counted for the confirmation warning but never moved with its
+  // parent: it is a visible session of its own, not a hidden subagent.
+  const parentPlan = await call(route(), 'plan', { sessionId: PARENT, includeSubagents: true })
+  check('the plan counts forks for the warning without moving them',
+    parentPlan.body.ok === true
+      && parentPlan.body.value?.forkCount === 1
+      && parentPlan.body.value?.targets?.some((target) => target.id === FORK) === false,
+    JSON.stringify({ forkCount: parentPlan.body.value?.forkCount, targets: parentPlan.body.value?.targets?.map((target) => target.id) }))
   const movedOrphan = await call(route(), 'move', { sessionId: ORPHAN_A })
   check('move puts an orphan into the recycle bin like any other session',
     movedOrphan.body.ok === true
@@ -575,6 +583,14 @@ const { apply } = await import(pathToFileURL(PLUGIN).href)
       && await stat(childDir).then(() => true, () => false)
       && orphanIds(afterParentLeft.body.value).includes(CHILD),
     JSON.stringify(afterParentLeft.body.value?.orphans))
+  // The fork loses its sidebar row the moment the parent leaves the catalog, so
+  // the panel has to carry it as an orphan too — labelled as a fork, not a
+  // subagent, because that is what it is.
+  const orphanKinds = new Map((afterParentLeft.body.value?.orphans ?? []).map((entry) => [entry.id, entry.kind]))
+  check('a fork whose parent left the catalog is listed as an orphan fork',
+    orphanKinds.get(FORK) === 'fork', JSON.stringify([...orphanKinds]))
+  check('a hidden subagent orphan still reports its own kind',
+    orphanKinds.get(CHILD) === 'subagent', JSON.stringify([...orphanKinds]))
   const movedChild = await call(route(), 'move', { sessionId: CHILD })
   check('that leftover child can then be binned on its own',
     movedChild.body.ok === true

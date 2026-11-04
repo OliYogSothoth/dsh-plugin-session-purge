@@ -255,13 +255,14 @@ class SessionPurger {
   }
 
   /**
-   * Hidden subagent sessions whose parent is no longer in the session root.
+   * Sessions whose parent is no longer in the session root.
    *
-   * The definition is exactly two conditions and nothing more:
-   *   1. the header's `origin` is `'subagent'` — the hidden children a session's
-   *      own delete flow offers as an optional bundle, which never get a row;
-   *   2. the `parentSession` that names its owner is absent from the catalog
-   *      (or empty, in which case no parent could ever name it either).
+   * Two kinds become unreachable when the parent leaves the catalog:
+   *   1. a **hidden subagent** (`origin: 'subagent'`) — it never has a row, and
+   *      the parent's dialog was the only surface that ever named it;
+   *   2. a **visible fork** (`parentSession` and no `origin`) — the sidebar only
+   *      shows it under its parent, so with the parent out of the root the row is
+   *      gone while the directory is untouched (measured 2026-11-02).
    *
    * "Absent from the catalog" is deliberately the only test for the parent: the
    * bin lives under the harness home, not under the session root, so moving the
@@ -269,28 +270,30 @@ class SessionPurger {
    * test covers both, so there is no "the parent is in the bin" case — and no
    * second place that could disagree with the first.
    *
-   * These are the sessions nothing else can reach: hidden ones have no sidebar
-   * row, the parent's dialog was the only surface that ever named them, and a
-   * parent already out of the root cannot open that dialog again. Without this
-   * list they stay on disk with no way to select them.
+   * These are the sessions nothing else can reach: a parent already out of the
+   * root cannot open its dialog again. Without this list they stay on disk with
+   * no way to select them.
    *
-   * @returns the orphan ids with their cached titles, oldest first.
+   * @returns the orphan ids with their kind and cached titles, oldest first.
    */
   async orphanSessions() {
     const headers = await this.sessionHeaders()
     const orphans = []
     for (const header of headers.values()) {
-      if (header.origin !== 'subagent') continue
       const parent = typeof header.parentSession === 'string' ? header.parentSession : ''
+      const kind = header.origin === 'subagent' ? 'subagent' : parent === '' ? '' : 'fork'
+      // A top-level session (neither marker) can never be orphaned this way.
+      if (kind === '') continue
       if (parent !== '' && headers.has(parent)) continue
       orphans.push({
         id: header.id,
+        kind,
         createdAt: typeof header.createdAt === 'number' ? header.createdAt : 0,
         title: this.cachedTitle(header),
       })
     }
     orphans.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
-    return orphans.map((orphan) => ({ id: orphan.id, title: orphan.title }))
+    return orphans.map((orphan) => ({ id: orphan.id, kind: orphan.kind, title: orphan.title }))
   }
 
   /**
@@ -345,6 +348,10 @@ class SessionPurger {
     const includeSubagents = request.includeSubagents === true
     const targets = [headers.get(sessionId)]
     if (includeSubagents) targets.push(...descendants(headers, sessionId))
+    // A fork is never moved with its parent (it is its own session), but the
+    // sidebar only shows it under a present parent — so the dialog names how many
+    // rows will disappear from the list once this session leaves the root.
+    const forks = forkDescendants(headers, sessionId)
 
     // A session that is merely *open* is no longer an obstacle: `execute`
     // stops its work and evicts its in-memory entry before touching any file,
@@ -392,6 +399,7 @@ class SessionPurger {
         includeSubagents,
         targets: planned,
         subagentCount: planned.length - 1,
+        forkCount: forks.length,
       },
     }
   }
@@ -895,6 +903,40 @@ function descendants(headers, rootId) {
   while (queue.length > 0) {
     for (const child of childrenOf.get(queue.shift()) ?? []) {
       if (child.origin !== 'subagent') continue
+      found.push(child)
+      queue.push(child.id)
+    }
+  }
+  return found
+}
+
+/**
+ * Every visible fork below one session, transitively.
+ *
+ * The mirror of `descendants`: a fork carries `parentSession` but no `origin`, so
+ * it is its own session and is never moved with its parent. It is still counted
+ * for the confirmation dialog, because the sidebar only shows a fork under a
+ * present parent — removing the parent hides the fork's row until the parent is
+ * restored. Hidden subagent children are not followed here: they travel in the
+ * optional subagent bundle instead.
+ *
+ * @param headers - every session header in the root, by id.
+ * @param rootId - the session whose dialog is open.
+ * @returns the fork headers below it, in catalog order.
+ */
+function forkDescendants(headers, rootId) {
+  const childrenOf = new Map()
+  for (const header of headers.values()) {
+    if (typeof header.parentSession !== 'string') continue
+    const bucket = childrenOf.get(header.parentSession)
+    if (bucket === undefined) childrenOf.set(header.parentSession, [header])
+    else bucket.push(header)
+  }
+  const found = []
+  const queue = [rootId]
+  while (queue.length > 0) {
+    for (const child of childrenOf.get(queue.shift()) ?? []) {
+      if (child.origin === 'subagent') continue
       found.push(child)
       queue.push(child.id)
     }
