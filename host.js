@@ -419,7 +419,6 @@ class SessionPurger {
         unarchived: false,
         unpinned: false,
         moved: [],
-        workspaces: [],
         evicted: false,
         workStopped: false,
         errors: [],
